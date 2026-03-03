@@ -1,0 +1,8 @@
+{
+  "name": "SmartHandla - AI Inköpslista",
+  "description": "En intelligent inköpslista som använder AI för att tolka naturligt språk, sortera varor efter butiksgångar och importera ingredienser direkt från recept-länkar eller bilder.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
