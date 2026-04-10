@@ -420,6 +420,47 @@ export default function App() {
     ));
   };
 
+  // Show splash while Firebase initialises (avoids flash of login screen for returning users)
+  if (!isFirebaseReady) {
+    return (
+      <div className="min-h-screen bg-background-dark flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <h1 className="text-4xl font-black text-primary italic tracking-tighter">SmartHandla</h1>
+          <Loader2 className="animate-spin text-primary" size={28} />
+        </div>
+      </div>
+    );
+  }
+
+  // Block access until the user is signed in with Google
+  if (!userProfile.isGoogleAccount) {
+    return (
+      <div className="min-h-screen bg-background-dark flex items-center justify-center p-6">
+        <div className="w-full max-w-sm flex flex-col items-center gap-8 text-center">
+          <div>
+            <h1 className="text-5xl font-black text-primary italic tracking-tighter mb-3">SmartHandla</h1>
+            <p className="text-gray-400 font-bold text-sm">Din smarta AI-inköpslista</p>
+          </div>
+          <div className="w-full p-8 bg-gray-900 rounded-[2rem] border border-gray-800 shadow-2xl space-y-6">
+            <div className="space-y-2">
+              <p className="font-black text-white text-lg">Välkommen!</p>
+              <p className="text-gray-400 text-sm font-bold leading-relaxed">
+                Logga in med ditt Google-konto för att använda SmartHandla.
+              </p>
+            </div>
+            <button
+              onClick={handleLogin}
+              className="w-full py-4 text-sm font-black text-white bg-blue-600 rounded-2xl shadow-xl shadow-blue-600/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
+            >
+              <div className="bg-white text-blue-600 w-5 h-5 rounded-sm flex items-center justify-center font-black text-[10px]">G</div>
+              Logga in med Google
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background-light dark:bg-background-dark font-sans transition-colors duration-300">
       {/* Hidden File Input for Camera/Gallery */}
