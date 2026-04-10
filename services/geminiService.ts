@@ -1,7 +1,21 @@
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import { GroceryItem, ExtractedItem, GroundingSource } from "../types";
+import { ExtractedItem, GroundingSource } from "../types";
 
-// Service för att hantera AI-logik
+// The complete list of valid Swedish store aisles used throughout the app.
+// All AI calls must use exactly these values so items are grouped correctly.
+export const VALID_AISLES = [
+  'Frukt & Grönt',
+  'Bageri',
+  'Mejeri',
+  'Kött & Chark',
+  'Skafferi',
+  'Fryst',
+  'Hem & Hushåll',
+  'Övrigt',
+] as const;
+
+const AISLE_INSTRUCTION = `Välj ALLTID avdelning från exakt denna lista (inget annat är tillåtet): ${VALID_AISLES.join(', ')}. Standardvärde: "Övrigt".`;
+
 export const addItemsFunctionDeclaration: FunctionDeclaration = {
   name: 'add_items_to_list',
   parameters: {
@@ -14,9 +28,12 @@ export const addItemsFunctionDeclaration: FunctionDeclaration = {
         items: {
           type: Type.OBJECT,
           properties: {
-            name: { type: Type.STRING, description: 'Varan som ska köpas (t.ex. "mjölk")' },
-            quantity: { type: Type.STRING, description: 'Mängd eller antal (t.ex. "2 liter" eller "3 st")' },
-            aisle: { type: Type.STRING, description: 'Butiksavdelning (t.ex. "Mejeri", "Frukt & Grönt", "Skafferi")' },
+            name: { type: Type.STRING, description: 'Varan som ska köpas, på svenska (t.ex. "mjölk").' },
+            quantity: { type: Type.STRING, description: 'Mängd eller antal (t.ex. "2 liter" eller "3 st").' },
+            aisle: {
+              type: Type.STRING,
+              description: `Butiksavdelning. Måste vara ett av: ${VALID_AISLES.join(', ')}.`,
+            },
             note: { type: Type.STRING, description: 'En notering eller tagg, t.ex. namnet på en maträtt varan tillhör.' }
           },
           required: ['name', 'aisle']
@@ -27,16 +44,17 @@ export const addItemsFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
-// Fix: Always create a new GoogleGenAI instance right before making an API call and use .text property getter.
-export const smartMergeItems = async (existingItems: GroceryItem[], newInput: string): Promise<{ items: ExtractedItem[], isComplex: boolean }> => {
+// Simple structured output — thinking disabled to avoid unnecessary cost.
+export const smartMergeItems = async (newInput: string): Promise<{ items: ExtractedItem[], isComplex: boolean }> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash",
       contents: {
-        parts: [{ text: `Nuvarande lista: ${JSON.stringify(existingItems.map(i => ({ name: i.name, quantity: i.quantity })))}\nAnvändaren skriver: "${newInput}"` }]
+        parts: [{ text: `Användaren skriver: "${newInput}"` }]
       },
       config: {
+        thinkingConfig: { thinkingBudget: 0 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -54,16 +72,16 @@ export const smartMergeItems = async (existingItems: GroceryItem[], newInput: st
                 required: ["name", "aisle"]
               }
             },
-            isComplex: { 
-              type: Type.BOOLEAN, 
-              description: "Sätt till true om inputen var en maträtt som expanderades eller en lång lista (3+ varor). Sätt till false om det bara var 1-2 enkla varor." 
+            isComplex: {
+              type: Type.BOOLEAN,
+              description: "Sätt till true om inputen var en maträtt som expanderades eller en lång lista (3+ varor). Sätt till false om det bara var 1-2 enkla varor."
             }
           },
           required: ["items", "isComplex"]
         },
-        systemInstruction: `Du är en expert på inköp och matlagning. 
+        systemInstruction: `Du är en expert på inköp och matlagning. Svara alltid på svenska.
         Din uppgift är att tolka användarens input och returnera en lista med varor.
-        
+
         VIKTIGT - MATRÄTTER VS VAROR:
         1. Om användaren skriver en MATRÄTT (t.ex. "Lasagne", "Tacos"):
            - Expandera till ingredienser.
@@ -73,14 +91,11 @@ export const smartMergeItems = async (existingItems: GroceryItem[], newInput: st
            - Sätt isComplex: true.
         3. Om användaren skriver 1-2 ENKLA VAROR (t.ex. "mjölk", "smör och bröd"):
            - Sätt isComplex: false.
-        
-        Regler:
-        - Svara på svenska.
-        - Kategorisera varorna i logiska butiksgångar.
-        - Var specifik med mängder.`
+
+        ${AISLE_INSTRUCTION}
+        Var specifik med mängder.`
       },
     });
-    // Fix: Access .text as a property, not a method.
     const text = response.text || '{"items": [], "isComplex": false}';
     return JSON.parse(text) as { items: ExtractedItem[], isComplex: boolean };
   } catch (error) {
@@ -89,33 +104,39 @@ export const smartMergeItems = async (existingItems: GroceryItem[], newInput: st
   }
 };
 
-// Fix: Always create a new GoogleGenAI instance right before making an API call and correctly extract grounding sources.
+// Complex task: web search + long-context extraction — thinking left at default.
 export const extractFromUrl = async (url: string): Promise<{ items: ExtractedItem[], sources: GroundingSource[] }> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: { parts: [{ text: `Extrahera alla ingredienser från detta recept som en inköpslista på svenska: ${url}` }] },
+      model: "gemini-2.5-flash",
+      contents: { parts: [{ text: `Extrahera alla ingredienser från detta recept och returnera ENBART ett JSON-array (inga andra ord, inget markdown) med denna struktur: [{"name":"...","quantity":"...","aisle":"...","note":"receptnamnet"}]. Recept-URL: ${url}` }] },
       config: {
         tools: [{ googleSearch: {} }],
-        systemInstruction: "Hitta receptets ingredienser. Sätt receptets namn som 'note' på alla varor. Returnera en lista på svenska sorterad efter butiksgång i ett tydligt JSON-format."
+        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. Hitta receptets alla ingredienser. Sätt receptets namn som 'note' på varje vara. ${AISLE_INSTRUCTION} Returnera ENBART ett rent JSON-array, inget annat.`
       },
     });
-    
-    // Fix: Access .text as a property and extract groundingMetadata chunks.
+
     const text = response.text || "[]";
     const sources = (response.candidates?.[0]?.groundingMetadata?.groundingChunks as GroundingSource[]) || [];
-    
+
     let items: ExtractedItem[] = [];
     try {
-      // Safely clean and parse JSON that might be wrapped in markdown code blocks.
-      const cleanedText = text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(cleanedText);
-      items = Array.isArray(parsed) ? (parsed as ExtractedItem[]) : (parsed.items || []);
+      const jsonMatch = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        items = Array.isArray(parsed) ? (parsed as ExtractedItem[]) : (parsed.items || []);
+      }
     } catch (e) {
       console.warn("Failed to parse JSON from search result, returning empty items", e);
     }
-    
+
+    // Clamp any aisle values that didn't match the predefined list.
+    items = items.map(item => ({
+      ...item,
+      aisle: (VALID_AISLES as readonly string[]).includes(item.aisle) ? item.aisle : 'Övrigt',
+    }));
+
     return { items, sources };
   } catch (error) {
     console.error("URL extraction error:", error);
@@ -123,19 +144,22 @@ export const extractFromUrl = async (url: string): Promise<{ items: ExtractedIte
   }
 };
 
-// Fix: Always create a new GoogleGenAI instance right before making an API call and follow strict multimodal structure.
+// Vision task — straightforward extraction, thinking disabled to reduce cost.
 export const extractFromImage = async (base64: string): Promise<ExtractedItem[]> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const mimeType = base64.startsWith('data:') ? base64.split(';')[0].split(':')[1] : 'image/jpeg';
+  const imageData = base64.includes(',') ? base64.split(',')[1] : base64;
   try {
     const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash",
       contents: {
         parts: [
-          { inlineData: { mimeType: "image/jpeg", data: base64.split(",")[1] } },
+          { inlineData: { mimeType: mimeType as any, data: imageData } },
           { text: "Identifiera alla ingredienser och varor i den här bilden och skapa en inköpslista på svenska." }
         ]
       },
       config: {
+        thinkingConfig: { thinkingBudget: 0 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -149,50 +173,20 @@ export const extractFromImage = async (base64: string): Promise<ExtractedItem[]>
             },
             required: ["name", "aisle"]
           }
-        }
+        },
+        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. ${AISLE_INSTRUCTION}`
       },
     });
-    // Fix: Access .text as a property.
     const text = response.text || "[]";
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? (parsed as ExtractedItem[]) : [];
+    const items: ExtractedItem[] = Array.isArray(parsed) ? parsed : [];
+    // Clamp any aisle values that didn't match the predefined list.
+    return items.map(item => ({
+      ...item,
+      aisle: (VALID_AISLES as readonly string[]).includes(item.aisle) ? item.aisle : 'Övrigt',
+    }));
   } catch (error) {
     console.error("Image extraction error:", error);
     return [];
-  }
-};
-
-// Fix: Always create a new GoogleGenAI instance right before making an API call and use property getters for text.
-export const categorizeItems = async (items: GroceryItem[]): Promise<GroceryItem[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: { parts: [{ text: `Sortera dessa varor i logiska butiksgångar för en matvarubutik: ${items.map(i => i.name).join(", ")}` }] },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              aisle: { type: Type.STRING }
-            },
-            required: ["name", "aisle"]
-          }
-        }
-      },
-    });
-    // Fix: Access .text as a property.
-    const text = response.text || "[]";
-    const categories = JSON.parse(text) as { name: string, aisle: string }[];
-    return items.map(item => {
-      const cat = categories.find((c) => c.name.toLowerCase() === item.name.toLowerCase());
-      return cat ? { ...item, aisle: cat.aisle } : item;
-    });
-  } catch (error) {
-    console.error("Categorization error:", error);
-    return items;
   }
 };

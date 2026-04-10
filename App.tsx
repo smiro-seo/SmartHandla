@@ -19,19 +19,19 @@ import {
   CloudUpload, 
   User, 
   LogOut,
-  Settings2,
-  Globe
+  Settings2
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
 import { onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { getDb, getAuthService, googleProvider } from './firebase';
 import { GroceryItem, GroceryList, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
-import { 
-  extractFromUrl, 
-  smartMergeItems, 
+import {
+  extractFromUrl,
+  smartMergeItems,
   extractFromImage,
-  addItemsFunctionDeclaration 
+  addItemsFunctionDeclaration,
+  VALID_AISLES
 } from './services/geminiService';
 
 // --- INITIALDATA ---
@@ -40,9 +40,6 @@ const INITIAL_LISTS: GroceryList[] = [
   { id: 'l2', name: 'Veckohandling', icon: 'calendar', items: [] },
 ];
 
-const DEFAULT_AISLE_ORDER = [
-  'Frukt & Grönt', 'Bageri', 'Mejeri', 'Kött & Chark', 'Skafferi', 'Fryst', 'Hem & Hushåll', 'Övrigt'
-];
 
 // --- HJÄLPFUNKTIONER ---
 const generateId = () => Math.random().toString(36).substr(2, 9).toUpperCase();
@@ -116,15 +113,21 @@ export default function App() {
 
   const liveSessionRef = useRef<any>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const inputAudioCtxRef = useRef<AudioContext | null>(null);
+  const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const activeListIdRef = useRef(activeListId);
   const isInitialLoad = useRef(true);
   const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartTimeRef = useRef(0);
   const currentInputTranscriptionRef = useRef('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [processingLabel, setProcessingLabel] = useState('Bearbetar...');
+  const [aisleOrder, setAisleOrder] = useState<string[]>([...VALID_AISLES]);
+  const [isAisleEditorOpen, setIsAisleEditorOpen] = useState(false);
 
   const activeList = useMemo(() => lists.find(l => l.id === activeListId) || lists[0], [lists, activeListId]);
-  
+
   const itemsByAisle = useMemo(() => {
     const grouped: Record<string, GroceryItem[]> = {};
     activeList.items.filter(i => !i.checked).forEach(item => {
@@ -134,6 +137,14 @@ export default function App() {
     });
     return grouped;
   }, [activeList.items]);
+
+  const sortedAisleEntries = useMemo(() => {
+    return Object.entries(itemsByAisle).sort(([a], [b]) => {
+      const ai = aisleOrder.indexOf(a);
+      const bi = aisleOrder.indexOf(b);
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    });
+  }, [itemsByAisle, aisleOrder]);
 
   const completedItems = useMemo(() => activeList.items.filter(i => i.checked), [activeList.items]);
 
@@ -175,8 +186,9 @@ export default function App() {
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data.lists) setLists(data.lists);
+          if (data.aisleOrder) setAisleOrder(data.aisleOrder);
         } else {
-          setDoc(userDocRef, { name: userProfile.name, lists: INITIAL_LISTS });
+          setDoc(userDocRef, { name: userProfile.name, lists: INITIAL_LISTS, aisleOrder: [...VALID_AISLES] });
         }
         isInitialLoad.current = false;
       });
@@ -189,13 +201,13 @@ export default function App() {
       setIsSyncing(true);
       try {
         const db = getDb();
-        await updateDoc(doc(db, 'users', userProfile.syncCode), { lists, name: userProfile.name });
+        await updateDoc(doc(db, 'users', userProfile.syncCode), { lists, name: userProfile.name, aisleOrder });
       } catch (e) { console.warn("Sync failed:", e); }
       finally { setIsSyncing(false); }
     };
     const t = setTimeout(update, 2000);
     return () => clearTimeout(t);
-  }, [lists, userProfile.name, isFirebaseReady]);
+  }, [lists, aisleOrder, userProfile.name, isFirebaseReady]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDarkMode);
@@ -220,16 +232,29 @@ export default function App() {
     }));
   };
 
+  const isUrl = (value: string) => /^https?:\/\/.+/i.test(value.trim());
+
   const handleSmartAdd = async () => {
     if (!inputValue.trim()) return;
-    setIsProcessing(true);
-    const text = inputValue;
+    const text = inputValue.trim();
     setInputValue('');
-    try {
-      const res = await smartMergeItems(activeList.items, text);
-      addExtractedItems(res.items);
-    } catch (e) { console.error("Smart add error:", e); }
-    finally { setIsProcessing(false); }
+    setIsProcessing(true);
+
+    if (isUrl(text)) {
+      setProcessingLabel('Hämtar recept...');
+      try {
+        const res = await extractFromUrl(text);
+        if (res.items.length > 0) addExtractedItems(res.items);
+      } catch (e) { console.error("URL extraction error:", e); }
+    } else {
+      setProcessingLabel('Bearbetar...');
+      try {
+        const res = await smartMergeItems(text);
+        addExtractedItems(res.items);
+      } catch (e) { console.error("Smart add error:", e); }
+    }
+
+    setIsProcessing(false);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -237,6 +262,7 @@ export default function App() {
     if (!file) return;
 
     setIsProcessing(true);
+    setProcessingLabel('Analyserar bild...');
     try {
       const reader = new FileReader();
       reader.onloadend = async () => {
@@ -258,8 +284,26 @@ export default function App() {
     setIsLiveMode(false);
     if (liveSessionRef.current) {
       try { liveSessionRef.current.close(); } catch(e) {}
+      liveSessionRef.current = null;
     }
-    if (scriptProcessorRef.current) scriptProcessorRef.current.disconnect();
+    if (scriptProcessorRef.current) {
+      scriptProcessorRef.current.disconnect();
+      scriptProcessorRef.current = null;
+    }
+    // Stop microphone tracks so the browser removes the recording indicator.
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    // Close audio contexts to free OS resources.
+    if (inputAudioCtxRef.current) {
+      try { inputAudioCtxRef.current.close(); } catch(e) {}
+      inputAudioCtxRef.current = null;
+    }
+    if (outputAudioCtxRef.current) {
+      try { outputAudioCtxRef.current.close(); } catch(e) {}
+      outputAudioCtxRef.current = null;
+    }
     audioSourcesRef.current.forEach(s => {
       try { s.stop(); } catch(e) {}
     });
@@ -271,9 +315,12 @@ export default function App() {
     if (isLiveMode) { stopLiveMode(); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      inputAudioCtxRef.current = inputCtx;
+      outputAudioCtxRef.current = outputCtx;
       setIsLiveMode(true);
       setVoiceTranscription('Jag lyssnar...');
       
@@ -312,12 +359,12 @@ export default function App() {
               for (const fc of fcs) {
                 if (fc.name === 'add_items_to_list' && fc.args.items) {
                   addExtractedItems(fc.args.items);
-                  sessionPromise.then(s => s.sendToolResponse({ 
-                    functionResponses: { 
-                      id: fc.id, 
-                      name: fc.name, 
-                      response: { result: "ok" } 
-                    } 
+                  sessionPromise.then(s => s.sendToolResponse({
+                    functionResponses: [{
+                      id: fc.id,
+                      name: fc.name,
+                      response: { result: "ok" }
+                    }]
                   }));
                 }
               }
@@ -331,7 +378,7 @@ export default function App() {
         config: {
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [addItemsFunctionDeclaration] }],
-          systemInstruction: "Du är en inköpsassistent. Lägg till varor när användaren pratar. Svara kort."
+          systemInstruction: `Du är en svensk inköpsassistent. Tala och svara alltid på svenska. Lägg till varor när användaren pratar. Svara kort. Välj alltid avdelning från: ${VALID_AISLES.join(', ')}.`
         }
       });
       liveSessionRef.current = await sessionPromise;
@@ -357,6 +404,14 @@ export default function App() {
     setLists(prev => (prev as GroceryList[]).map(l => 
       l.id === activeListId ? { ...l, items: l.items.map(i => i.id === itemId ? { ...i, checked } : i) } : l
     ));
+  };
+
+  const moveAisle = (index: number, direction: -1 | 1) => {
+    const next = index + direction;
+    if (next < 0 || next >= aisleOrder.length) return;
+    const updated = [...aisleOrder];
+    [updated[index], updated[next]] = [updated[next], updated[index]];
+    setAisleOrder(updated);
   };
 
   const deleteItem = (itemId: string) => {
@@ -440,15 +495,43 @@ export default function App() {
             </nav>
 
             <div className="pt-6 border-t dark:border-gray-800 space-y-3">
-              {/* Länkimport-knapp flyttad hit för att ge plats åt kamera i huvudfönstret */}
-              <button 
-                onClick={() => { setView('import-url'); setIsSidebarOpen(false); }}
-                className="w-full py-4 rounded-2xl border-2 dark:border-gray-800 flex items-center justify-center gap-3 font-black text-sm dark:text-white hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-              >
-                <Globe size={20} /> Importera från recept
-              </button>
-              <button 
-                onClick={() => setIsDarkMode(!isDarkMode)} 
+              {/* Aisle order editor */}
+              <div>
+                <button
+                  onClick={() => setIsAisleEditorOpen(!isAisleEditorOpen)}
+                  className="w-full py-4 rounded-2xl border-2 dark:border-gray-800 flex items-center justify-center gap-3 font-black text-sm dark:text-white hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  <Settings2 size={20} />
+                  Sortera avdelningar
+                  {isAisleEditorOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+                {isAisleEditorOpen && (
+                  <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border dark:border-gray-700 space-y-0.5">
+                    {aisleOrder.map((aisle, index) => (
+                      <div key={aisle} className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white dark:hover:bg-gray-700/50 transition-colors">
+                        <span className="flex-1 text-sm font-bold dark:text-white truncate">{aisle}</span>
+                        <button
+                          onClick={() => moveAisle(index, -1)}
+                          disabled={index === 0}
+                          className="p-1 rounded-lg text-gray-400 hover:text-primary disabled:opacity-20 transition-colors"
+                        >
+                          <ChevronUp size={15} />
+                        </button>
+                        <button
+                          onClick={() => moveAisle(index, 1)}
+                          disabled={index === aisleOrder.length - 1}
+                          className="p-1 rounded-lg text-gray-400 hover:text-primary disabled:opacity-20 transition-colors"
+                        >
+                          <ChevronDown size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={() => setIsDarkMode(!isDarkMode)}
                 className="w-full py-4 rounded-2xl border-2 dark:border-gray-800 flex items-center justify-center gap-3 font-black text-sm dark:text-white hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
               >
                 {isDarkMode ? <Sun size={20} /> : <Moon size={20} />} {isDarkMode ? 'Ljust läge' : 'Mörkt läge'}
@@ -500,7 +583,7 @@ export default function App() {
               value={inputValue} 
               onChange={e => setInputValue(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSmartAdd()}
-              placeholder="Vad ska du handla?"
+              placeholder="Vara, maträtt eller receptlänk..."
               className="flex-1 bg-transparent border-none focus:ring-0 font-bold text-lg dark:text-white placeholder-gray-400 py-4"
             />
             {inputValue.trim() || isProcessing ? (
@@ -524,7 +607,7 @@ export default function App() {
           {(isLiveMode || isProcessing) && (
             <div className="px-8 py-3 border-t dark:border-gray-800 text-sm font-black text-primary italic animate-pulse flex items-center gap-2">
               <div className="w-2 h-2 bg-primary rounded-full animate-ping" />
-              {isProcessing ? 'Bearbetar bild...' : voiceTranscription}
+              {isProcessing ? processingLabel : voiceTranscription}
             </div>
           )}
         </section>
@@ -538,7 +621,7 @@ export default function App() {
             </div>
           )}
 
-          {Object.entries(itemsByAisle).map(([aisle, items]) => (
+          {sortedAisleEntries.map(([aisle, items]) => (
             <div key={aisle} className="space-y-4">
               <h3 className="text-[11px] font-black uppercase text-gray-400 tracking-[0.25em] px-2 flex items-center gap-2">
                 <div className="w-1.5 h-1.5 bg-primary rounded-full" />
@@ -645,7 +728,7 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              Object.entries(itemsByAisle).map(([aisle, items]) => (
+              sortedAisleEntries.map(([aisle, items]) => (
                 <div key={aisle} className="space-y-4">
                   <div className="flex items-center gap-3 px-2">
                     <div className="w-1.5 h-8 bg-primary rounded-full" />
@@ -699,6 +782,7 @@ export default function App() {
                     const input = document.getElementById('recipe-url-input') as HTMLInputElement;
                     if (!input.value) return;
                     setIsProcessing(true);
+                    setProcessingLabel('Hämtar recept...');
                     try {
                       const res = await extractFromUrl(input.value);
                       if (res.items.length > 0) {
