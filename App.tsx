@@ -22,7 +22,7 @@ import {
   Settings2
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
-import { onAuthStateChanged, signInWithRedirect, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { onAuthStateChanged, signInWithRedirect, signInWithPopup, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { getDb, getAuthService, googleProvider } from './firebase';
 import { GroceryItem, GroceryList, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
@@ -391,7 +391,16 @@ export default function App() {
     try {
       const auth = getAuthService();
       await setPersistence(auth, browserLocalPersistence);
-      await signInWithRedirect(auth, googleProvider);
+      // In standalone PWA mode, signInWithRedirect opens the auth page in the system
+      // browser whose localStorage is separate from the PWA's — the result never
+      // comes back. Use signInWithPopup instead, which stays within the WebView.
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                           (window.navigator as any).standalone === true;
+      if (isStandalone) {
+        await signInWithPopup(auth, googleProvider);
+      } else {
+        await signInWithRedirect(auth, googleProvider);
+      }
     } catch (e) { console.error("Login error:", e); }
   };
 
