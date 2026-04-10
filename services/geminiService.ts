@@ -16,6 +16,8 @@ export const VALID_AISLES = [
 
 const AISLE_INSTRUCTION = `Välj ALLTID avdelning från exakt denna lista (inget annat är tillåtet): ${VALID_AISLES.join(', ')}. Standardvärde: "Övrigt".`;
 
+const METRIC_INSTRUCTION = `Använd ALLTID metriska måttenheter (g, kg, ml, dl, l, msk, tsk, st, krm). Konvertera imperial till metriskt och avrunda till jämna tal (t.ex. 5,5 oz → 2 dl, 1 cup → 2,5 dl, 1 lb → 450 g).`;
+
 export const addItemsFunctionDeclaration: FunctionDeclaration = {
   name: 'add_items_to_list',
   parameters: {
@@ -29,7 +31,7 @@ export const addItemsFunctionDeclaration: FunctionDeclaration = {
           type: Type.OBJECT,
           properties: {
             name: { type: Type.STRING, description: 'Varan som ska köpas, på svenska (t.ex. "mjölk").' },
-            quantity: { type: Type.STRING, description: 'Mängd eller antal (t.ex. "2 liter" eller "3 st").' },
+            quantity: { type: Type.STRING, description: 'Mängd i metriska enheter (t.ex. "2 dl", "500 g", "3 st"). Konvertera imperial till metriskt.' },
             aisle: {
               type: Type.STRING,
               description: `Butiksavdelning. Måste vara ett av: ${VALID_AISLES.join(', ')}.`,
@@ -93,6 +95,7 @@ export const smartMergeItems = async (newInput: string): Promise<{ items: Extrac
            - Sätt isComplex: false.
 
         ${AISLE_INSTRUCTION}
+        ${METRIC_INSTRUCTION}
         Var specifik med mängder.`
       },
     });
@@ -113,7 +116,7 @@ export const extractFromUrl = async (url: string): Promise<{ items: ExtractedIte
       contents: { parts: [{ text: `Extrahera alla ingredienser från detta recept och returnera ENBART ett JSON-array (inga andra ord, inget markdown) med denna struktur: [{"name":"...","quantity":"...","aisle":"...","note":"receptnamnet"}]. Recept-URL: ${url}` }] },
       config: {
         tools: [{ googleSearch: {} }],
-        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. Hitta receptets alla ingredienser. Sätt receptets namn som 'note' på varje vara. ${AISLE_INSTRUCTION} Returnera ENBART ett rent JSON-array, inget annat.`
+        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. Hitta receptets alla ingredienser. Sätt receptets namn som 'note' på varje vara. ${AISLE_INSTRUCTION} ${METRIC_INSTRUCTION} Returnera ENBART ett rent JSON-array, inget annat.`
       },
     });
 
@@ -174,7 +177,7 @@ export const extractFromImage = async (base64: string): Promise<ExtractedItem[]>
             required: ["name", "aisle"]
           }
         },
-        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. ${AISLE_INSTRUCTION}`
+        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. ${AISLE_INSTRUCTION} ${METRIC_INSTRUCTION}`
       },
     });
     const text = response.text || "[]";

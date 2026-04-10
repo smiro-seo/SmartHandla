@@ -222,19 +222,48 @@ export default function App() {
   useEffect(() => { activeListIdRef.current = activeListId; }, [activeListId]);
 
   // --- FUNKTIONER ---
+  // Adds two quantity strings that share the same unit, e.g. "2 dl" + "1 dl" = "3 dl".
+  // Returns the existing quantity unchanged when units differ or parsing fails.
+  const tryMergeQuantity = (existing: string | undefined, incoming: string | undefined): string | undefined => {
+    if (!incoming) return existing;
+    if (!existing) return incoming;
+    const parse = (q: string) => {
+      const m = q.trim().match(/^([\d.,]+)\s*(.*)$/);
+      if (!m) return null;
+      return { value: parseFloat(m[1].replace(',', '.')), unit: m[2].trim().toLowerCase() };
+    };
+    const a = parse(existing);
+    const b = parse(incoming);
+    if (!a || !b || a.unit !== b.unit) return existing;
+    const sum = Math.round((a.value + b.value) * 10) / 10;
+    const display = sum % 1 === 0 ? sum.toFixed(0) : sum.toFixed(1);
+    return a.unit ? `${display} ${a.unit}` : display;
+  };
+
   const addExtractedItems = (newItems: ExtractedItem[]) => {
     setLists(prev => (prev as GroceryList[]).map(list => {
-      if (list.id === activeListIdRef.current) {
-        const withIds = newItems.map(item => ({
-          ...item,
-          name: item.name ? item.name.charAt(0).toUpperCase() + item.name.slice(1) : item.name,
-          id: generateId(),
-          checked: false,
-          aisle: item.aisle || 'Övrigt'
-        }));
-        return { ...list, items: [...list.items, ...withIds] };
+      if (list.id !== activeListIdRef.current) return list;
+      const updated = [...list.items];
+      const toAdd: GroceryItem[] = [];
+      for (const newItem of newItems) {
+        const newName = (newItem.name || '').toLowerCase().trim();
+        const matchIdx = updated.findIndex(e => e.name.toLowerCase().trim() === newName);
+        if (matchIdx !== -1) {
+          updated[matchIdx] = {
+            ...updated[matchIdx],
+            quantity: tryMergeQuantity(updated[matchIdx].quantity, newItem.quantity),
+          };
+        } else {
+          toAdd.push({
+            ...newItem,
+            name: newItem.name ? newItem.name.charAt(0).toUpperCase() + newItem.name.slice(1) : newItem.name,
+            id: generateId(),
+            checked: false,
+            aisle: newItem.aisle || 'Övrigt',
+          });
+        }
       }
-      return list;
+      return { ...list, items: [...updated, ...toAdd] };
     }));
   };
 
@@ -374,7 +403,7 @@ export default function App() {
         config: {
           responseModalities: [Modality.TEXT],
           tools: [{ functionDeclarations: [addItemsFunctionDeclaration] }],
-          systemInstruction: `Du är en svensk inköpsassistent. Lägg till varor när användaren pratar. Svara INTE med text eller ljud — anropa bara add_items_to_list-funktionen. Välj alltid avdelning från: ${VALID_AISLES.join(', ')}.`
+          systemInstruction: `Du är en svensk inköpsassistent. Lägg till varor när användaren pratar. Svara INTE med text eller ljud — anropa bara add_items_to_list-funktionen. Välj alltid avdelning från: ${VALID_AISLES.join(', ')}. Använd alltid metriska måttenheter (g, kg, dl, ml, st). Konvertera imperial till metriskt och avrunda till jämna tal.`
         }
       });
       liveSessionRef.current = await sessionPromise;
