@@ -261,23 +261,26 @@ export default function App() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Reset so the same file can be picked again later
+    e.target.value = '';
     if (!file) return;
 
     setIsProcessing(true);
     setProcessingLabel('Analyserar bild...');
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = reader.result as string;
-        const items = await extractFromImage(base64);
-        if (items.length > 0) {
-          addExtractedItems(items);
-        }
-        setIsProcessing(false);
-      };
-      reader.readAsDataURL(file);
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const items = await extractFromImage(base64);
+      if (items.length > 0) {
+        addExtractedItems(items);
+      }
     } catch (e) {
       console.error("Image processing error:", e);
+    } finally {
       setIsProcessing(false);
     }
   };
@@ -471,12 +474,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background-light dark:bg-background-dark font-sans transition-colors duration-300">
       {/* Hidden File Input for Camera/Gallery */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileUpload} 
+      {/* Use absolute+opacity instead of display:none — Android PWA blocks .click() on display:none inputs */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
         accept="image/*"
-        className="hidden" 
+        style={{ position: 'absolute', opacity: 0, width: 0, height: 0, overflow: 'hidden' }}
       />
 
       {/* Sidomeny (Sidebar) */}
