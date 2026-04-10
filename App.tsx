@@ -19,7 +19,8 @@ import {
   CloudUpload, 
   User, 
   LogOut,
-  Settings2
+  Settings2,
+  ImageIcon
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
 import { onAuthStateChanged, signInWithRedirect, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
@@ -122,9 +123,11 @@ export default function App() {
   const nextStartTimeRef = useRef(0);
   const currentInputTranscriptionRef = useRef('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [processingLabel, setProcessingLabel] = useState('Bearbetar...');
   const [aisleOrder, setAisleOrder] = useState<string[]>([...VALID_AISLES]);
   const [isAisleEditorOpen, setIsAisleEditorOpen] = useState(false);
+  const [isImagePickerOpen, setIsImagePickerOpen] = useState(false);
 
   const activeList = useMemo(() => lists.find(l => l.id === activeListId) || lists[0], [lists, activeListId]);
 
@@ -473,8 +476,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-background-light dark:bg-background-dark font-sans transition-colors duration-300">
-      {/* Hidden File Input for Camera/Gallery */}
-      {/* Use absolute+opacity instead of display:none — Android PWA blocks .click() on display:none inputs */}
+      {/* Hidden file inputs — absolute+opacity instead of display:none (Android PWA blocks .click() on display:none) */}
       <input
         type="file"
         ref={fileInputRef}
@@ -482,6 +484,41 @@ export default function App() {
         accept="image/*"
         style={{ position: 'absolute', opacity: 0, width: 0, height: 0, overflow: 'hidden' }}
       />
+      <input
+        type="file"
+        ref={cameraInputRef}
+        onChange={handleFileUpload}
+        accept="image/*"
+        capture="environment"
+        style={{ position: 'absolute', opacity: 0, width: 0, height: 0, overflow: 'hidden' }}
+      />
+
+      {/* Image source picker bottom sheet */}
+      {isImagePickerOpen && (
+        <div className="fixed inset-0 z-[200] flex items-end" onClick={() => setIsImagePickerOpen(false)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative w-full bg-white dark:bg-gray-900 rounded-t-3xl p-6 pb-10 flex flex-col gap-3 shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-10 h-1 bg-gray-300 dark:bg-gray-600 rounded-full mx-auto mb-2" />
+            <button
+              onClick={() => { setIsImagePickerOpen(false); setTimeout(() => cameraInputRef.current?.click(), 50); }}
+              className="flex items-center gap-4 w-full px-4 py-4 rounded-2xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-semibold text-left"
+            >
+              <Camera size={22} className="text-primary" />
+              Ta foto
+            </button>
+            <button
+              onClick={() => { setIsImagePickerOpen(false); setTimeout(() => fileInputRef.current?.click(), 50); }}
+              className="flex items-center gap-4 w-full px-4 py-4 rounded-2xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-semibold text-left"
+            >
+              <ImageIcon size={22} className="text-primary" />
+              Välj från album
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Sidomeny (Sidebar) */}
       <div className={`fixed inset-0 z-[100] transition-opacity duration-300 ${isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
@@ -646,8 +683,8 @@ export default function App() {
                 {isProcessing ? <Loader2 className="animate-spin" /> : <SendHorizontal size={24} />}
               </button>
             ) : (
-              <button 
-                onClick={() => fileInputRef.current?.click()} 
+              <button
+                onClick={() => setIsImagePickerOpen(true)}
                 className="p-4 text-gray-400 hover:text-primary transition-colors"
                 title="Skanna kvitto eller bild"
               >
