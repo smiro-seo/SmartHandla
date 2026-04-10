@@ -118,6 +118,7 @@ export default function App() {
   const inputAudioCtxRef = useRef<AudioContext | null>(null);
   const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const activeListIdRef = useRef(activeListId);
+  const listsRef = useRef<GroceryList[]>(INITIAL_LISTS);
   const isInitialLoad = useRef(true);
   const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartTimeRef = useRef(0);
@@ -220,9 +221,27 @@ export default function App() {
   }, [isDarkMode]);
 
   useEffect(() => { activeListIdRef.current = activeListId; }, [activeListId]);
+  useEffect(() => { listsRef.current = lists as GroceryList[]; }, [lists]);
 
   // --- FUNKTIONER ---
-  // Adds two quantity strings that share the same unit, e.g. "2 dl" + "1 dl" = "3 dl".
+
+  // Normalise a name for comparison: lowercase, trim, collapse whitespace.
+  const normName = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ');
+
+  // Returns true when every word in the shorter name appears as a whole word
+  // in the longer name. E.g. "lök" matches "Gul lök"; "mjölk" does NOT match "lök".
+  const namesMatch = (a: string, b: string): boolean => {
+    const na = normName(a);
+    const nb = normName(b);
+    if (na === nb) return true;
+    const wa = na.split(' ').filter(w => w.length > 1);
+    const wb = nb.split(' ').filter(w => w.length > 1);
+    if (!wa.length || !wb.length) return false;
+    const [shorter, longer] = wa.length <= wb.length ? [wa, wb] : [wb, wa];
+    return shorter.every(w => longer.includes(w));
+  };
+
+  // Adds two quantity strings that share the same unit. "2 dl" + "1 dl" → "3 dl".
   // Returns the existing quantity unchanged when units differ or parsing fails.
   const tryMergeQuantity = (existing: string | undefined, incoming: string | undefined): string | undefined => {
     if (!incoming) return existing;
@@ -246,24 +265,21 @@ export default function App() {
       const updated = [...list.items];
       const toAdd: GroceryItem[] = [];
       for (const newItem of newItems) {
-        // AI-assisted merge: find existing item by the exact name the AI identified
-        const aiMatchIdx = newItem.mergeWith
+        // 1. AI hint: exact name match on the name the AI flagged
+        const aiIdx = newItem.mergeWith
           ? updated.findIndex(e => e.name === newItem.mergeWith)
           : -1;
-        // Fallback: case-insensitive name match
-        const nameMatchIdx = aiMatchIdx === -1
-          ? updated.findIndex(e => e.name.toLowerCase().trim() === (newItem.name || '').toLowerCase().trim())
+        // 2. Client-side: word-containment match (handles "lök" ↔ "Gul lök")
+        const clientIdx = aiIdx === -1
+          ? updated.findIndex(e => namesMatch(e.name, newItem.name))
           : -1;
-        const matchIdx = aiMatchIdx !== -1 ? aiMatchIdx : nameMatchIdx;
+        const matchIdx = aiIdx !== -1 ? aiIdx : clientIdx;
 
         if (matchIdx !== -1) {
           updated[matchIdx] = {
             ...updated[matchIdx],
-            // If AI provided mergeWith, it already computed the total quantity; otherwise add them
-            quantity: aiMatchIdx !== -1
-              ? (newItem.quantity ?? updated[matchIdx].quantity)
-              : tryMergeQuantity(updated[matchIdx].quantity, newItem.quantity),
-            // Preserve the recipe note so the user can see which recipe added/updated the item
+            quantity: tryMergeQuantity(updated[matchIdx].quantity, newItem.quantity),
+            // Carry over the recipe note so the badge keeps showing
             note: newItem.note || updated[matchIdx].note,
           };
         } else {
@@ -288,7 +304,9 @@ export default function App() {
     setInputValue('');
     setIsProcessing(true);
 
-    const currentItems = (lists as GroceryList[]).find(l => l.id === activeListId)?.items ?? [];
+    // Read from ref so we always have the latest list state even if this
+    // closure was created before the most recent item was added.
+    const currentItems = listsRef.current.find(l => l.id === activeListIdRef.current)?.items ?? [];
 
     if (isUrl(text)) {
       setProcessingLabel('Hämtar recept...');
@@ -322,7 +340,7 @@ export default function App() {
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const currentItems = (lists as GroceryList[]).find(l => l.id === activeListId)?.items ?? [];
+      const currentItems = listsRef.current.find(l => l.id === activeListIdRef.current)?.items ?? [];
       const items = await extractFromImage(base64, currentItems);
       if (items.length > 0) {
         addExtractedItems(items);
