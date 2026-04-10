@@ -225,11 +225,12 @@ export default function App() {
   const addExtractedItems = (newItems: ExtractedItem[]) => {
     setLists(prev => (prev as GroceryList[]).map(list => {
       if (list.id === activeListIdRef.current) {
-        const withIds = newItems.map(item => ({ 
-          ...item, 
-          id: generateId(), 
-          checked: false, 
-          aisle: item.aisle || 'Övrigt' 
+        const withIds = newItems.map(item => ({
+          ...item,
+          name: item.name ? item.name.charAt(0).toUpperCase() + item.name.slice(1) : item.name,
+          id: generateId(),
+          checked: false,
+          aisle: item.aisle || 'Övrigt'
         }));
         return { ...list, items: [...list.items, ...withIds] };
       }
@@ -326,9 +327,7 @@ export default function App() {
       streamRef.current = stream;
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       inputAudioCtxRef.current = inputCtx;
-      outputAudioCtxRef.current = outputCtx;
       setIsLiveMode(true);
       setVoiceTranscription('Jag lyssnar...');
       
@@ -347,17 +346,6 @@ export default function App() {
             scriptProcessor.connect(inputCtx.destination);
           },
           onmessage: async (m: LiveServerMessage) => {
-            const base64 = m.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64) {
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
-              const buffer = await decodeAudioData(decode(base64), outputCtx, 24000, 1);
-              const source = outputCtx.createBufferSource();
-              source.buffer = buffer;
-              source.connect(outputCtx.destination);
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += buffer.duration;
-              audioSourcesRef.current.add(source);
-            }
             if (m.serverContent?.inputTranscription) {
               currentInputTranscriptionRef.current += m.serverContent.inputTranscription.text || '';
               setVoiceTranscription(`Du: ${currentInputTranscriptionRef.current}`);
@@ -384,9 +372,9 @@ export default function App() {
           }
         },
         config: {
-          responseModalities: [Modality.AUDIO],
+          responseModalities: [Modality.TEXT],
           tools: [{ functionDeclarations: [addItemsFunctionDeclaration] }],
-          systemInstruction: `Du är en svensk inköpsassistent. Tala och svara alltid på svenska. Lägg till varor när användaren pratar. Svara kort. Välj alltid avdelning från: ${VALID_AISLES.join(', ')}.`
+          systemInstruction: `Du är en svensk inköpsassistent. Lägg till varor när användaren pratar. Svara INTE med text eller ljud — anropa bara add_items_to_list-funktionen. Välj alltid avdelning från: ${VALID_AISLES.join(', ')}.`
         }
       });
       liveSessionRef.current = await sessionPromise;
