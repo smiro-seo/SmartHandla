@@ -4,7 +4,12 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDy6oA0J9josLcoyp1Zb4N-yhFSmOYib_o",
-  authDomain: "smarthandla.firebaseapp.com",
+  // Use the current hostname as authDomain in production so the /__/auth/* proxy
+  // on the Cloudflare domain keeps the entire OAuth redirect chain on one origin.
+  // This is what makes iOS PWA auth work (no cross-context redirect to Safari).
+  authDomain: (typeof window !== 'undefined' && window.location.hostname !== 'localhost')
+    ? window.location.host
+    : 'smarthandla.firebaseapp.com',
   projectId: "smarthandla",
   storageBucket: "smarthandla.firebasestorage.app",
   messagingSenderId: "505416231137",

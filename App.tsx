@@ -22,7 +22,7 @@ import {
   Settings2
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
-import { onAuthStateChanged, signInWithRedirect, signInWithPopup, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { onAuthStateChanged, signInWithRedirect, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { getDb, getAuthService, googleProvider } from './firebase';
 import { GroceryItem, GroceryList, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
@@ -391,16 +391,12 @@ export default function App() {
     try {
       const auth = getAuthService();
       await setPersistence(auth, browserLocalPersistence);
-      // In standalone PWA mode, signInWithRedirect opens the auth page in the system
-      // browser whose localStorage is separate from the PWA's — the result never
-      // comes back. Use signInWithPopup instead, which stays within the WebView.
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
-                           (window.navigator as any).standalone === true;
-      if (isStandalone) {
-        await signInWithPopup(auth, googleProvider);
-      } else {
-        await signInWithRedirect(auth, googleProvider);
-      }
+      // Always use signInWithRedirect. The /__/auth/* Cloudflare Pages Function
+      // proxies Firebase's auth handler onto this domain, so the OAuth redirect_uri
+      // points here — keeping the entire chain on one origin. iOS then opens the
+      // final redirect in the PWA WebView (not Safari), so auth state lands in the
+      // correct storage context.
+      await signInWithRedirect(auth, googleProvider);
     } catch (e) { console.error("Login error:", e); }
   };
 
