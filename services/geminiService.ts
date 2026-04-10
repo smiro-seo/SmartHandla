@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import { ExtractedItem, GroundingSource } from "../types";
+import { ExtractedItem, GroceryItem, GroundingSource } from "../types";
 
 // The complete list of valid Swedish store aisles used throughout the app.
 // All AI calls must use exactly these values so items are grouped correctly.
@@ -17,6 +17,17 @@ export const VALID_AISLES = [
 const AISLE_INSTRUCTION = `Välj ALLTID avdelning från exakt denna lista (inget annat är tillåtet): ${VALID_AISLES.join(', ')}. Standardvärde: "Övrigt".`;
 
 const METRIC_INSTRUCTION = `Använd ALLTID metriska måttenheter (g, kg, ml, dl, l, msk, tsk, st, krm). Konvertera imperial till metriskt och avrunda till jämna tal (t.ex. 5,5 oz → 2 dl, 1 cup → 2,5 dl, 1 lb → 450 g).`;
+
+// Returns a system instruction block for AI-assisted merging against an existing list.
+// The AI sets mergeWith = exact existing name when it recognises a semantic match,
+// and returns the TOTAL quantity (existing + new) in the quantity field.
+const buildMergeContext = (existingItems: Pick<GroceryItem, 'name' | 'quantity'>[]) => {
+  if (!existingItems.length) return '';
+  const lines = existingItems.map(i => `"${i.name}"${i.quantity ? ' (' + i.quantity + ')' : ''}`).join(', ');
+  return `
+SAMMANSLAGNING: Följande varor finns redan i listan: ${lines}.
+Om en ny vara är samma sak som en befintlig vara (även om namnen skiljer sig lite, t.ex. "lök" ≈ "Gul lök"), sätt mergeWith till det EXAKTA befintliga varunamnet och returnera den TOTALA mängden i quantity (befintlig + ny, i metriska enheter). Om ingen match finns, lämna mergeWith tomt.`;
+};
 
 export const addItemsFunctionDeclaration: FunctionDeclaration = {
   name: 'add_items_to_list',
@@ -47,7 +58,10 @@ export const addItemsFunctionDeclaration: FunctionDeclaration = {
 };
 
 // Simple structured output — thinking disabled to avoid unnecessary cost.
-export const smartMergeItems = async (newInput: string): Promise<{ items: ExtractedItem[], isComplex: boolean }> => {
+export const smartMergeItems = async (
+  newInput: string,
+  existingItems: Pick<GroceryItem, 'name' | 'quantity'>[] = []
+): Promise<{ items: ExtractedItem[], isComplex: boolean }> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response: GenerateContentResponse = await ai.models.generateContent({
@@ -69,7 +83,8 @@ export const smartMergeItems = async (newInput: string): Promise<{ items: Extrac
                   name: { type: Type.STRING },
                   quantity: { type: Type.STRING },
                   aisle: { type: Type.STRING },
-                  note: { type: Type.STRING }
+                  note: { type: Type.STRING },
+                  mergeWith: { type: Type.STRING, description: 'Exakt namn på befintlig vara att slå ihop med, om match finns.' }
                 },
                 required: ["name", "aisle"]
               }
@@ -96,6 +111,7 @@ export const smartMergeItems = async (newInput: string): Promise<{ items: Extrac
 
         ${AISLE_INSTRUCTION}
         ${METRIC_INSTRUCTION}
+        ${buildMergeContext(existingItems)}
         Var specifik med mängder.`
       },
     });
@@ -108,15 +124,21 @@ export const smartMergeItems = async (newInput: string): Promise<{ items: Extrac
 };
 
 // Complex task: web search + long-context extraction — thinking left at default.
-export const extractFromUrl = async (url: string): Promise<{ items: ExtractedItem[], sources: GroundingSource[] }> => {
+export const extractFromUrl = async (
+  url: string,
+  existingItems: Pick<GroceryItem, 'name' | 'quantity'>[] = []
+): Promise<{ items: ExtractedItem[], sources: GroundingSource[] }> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
+    const mergeContext = existingItems.length
+      ? ` Befintliga varor i listan: ${existingItems.map(i => `"${i.name}"${i.quantity ? ' (' + i.quantity + ')' : ''}`).join(', ')}. Om en ingrediens matchar en befintlig vara, lägg till fältet "mergeWith" med det exakta befintliga varunamnet och returnera den totala mängden i "quantity".`
+      : '';
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: { parts: [{ text: `Extrahera alla ingredienser från detta recept och returnera ENBART ett JSON-array (inga andra ord, inget markdown) med denna struktur: [{"name":"...","quantity":"...","aisle":"...","note":"receptnamnet"}]. Recept-URL: ${url}` }] },
+      contents: { parts: [{ text: `Extrahera alla ingredienser från detta recept och returnera ENBART ett JSON-array (inga andra ord, inget markdown) med denna struktur: [{"name":"...","quantity":"...","aisle":"...","note":"receptnamnet","mergeWith":"...eller utelämna om ny vara"}]. Recept-URL: ${url}` }] },
       config: {
         tools: [{ googleSearch: {} }],
-        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. Hitta receptets alla ingredienser. Sätt receptets namn som 'note' på varje vara. ${AISLE_INSTRUCTION} ${METRIC_INSTRUCTION} Returnera ENBART ett rent JSON-array, inget annat.`
+        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. Hitta receptets alla ingredienser. Sätt receptets namn som 'note' på varje vara. ${AISLE_INSTRUCTION} ${METRIC_INSTRUCTION}${mergeContext} Returnera ENBART ett rent JSON-array, inget annat.`
       },
     });
 
@@ -148,7 +170,10 @@ export const extractFromUrl = async (url: string): Promise<{ items: ExtractedIte
 };
 
 // Vision task — straightforward extraction, thinking disabled to reduce cost.
-export const extractFromImage = async (base64: string): Promise<ExtractedItem[]> => {
+export const extractFromImage = async (
+  base64: string,
+  existingItems: Pick<GroceryItem, 'name' | 'quantity'>[] = []
+): Promise<ExtractedItem[]> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const mimeType = base64.startsWith('data:') ? base64.split(';')[0].split(':')[1] : 'image/jpeg';
   const imageData = base64.includes(',') ? base64.split(',')[1] : base64;
@@ -172,12 +197,13 @@ export const extractFromImage = async (base64: string): Promise<ExtractedItem[]>
               name: { type: Type.STRING },
               quantity: { type: Type.STRING },
               aisle: { type: Type.STRING },
-              note: { type: Type.STRING }
+              note: { type: Type.STRING },
+              mergeWith: { type: Type.STRING, description: 'Exakt namn på befintlig vara att slå ihop med, om match finns.' }
             },
             required: ["name", "aisle"]
           }
         },
-        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. ${AISLE_INSTRUCTION} ${METRIC_INSTRUCTION}`
+        systemInstruction: `Du är en matvaruexpert. Svara alltid på svenska. ${AISLE_INSTRUCTION} ${METRIC_INSTRUCTION} ${buildMergeContext(existingItems)}`
       },
     });
     const text = response.text || "[]";

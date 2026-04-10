@@ -246,12 +246,25 @@ export default function App() {
       const updated = [...list.items];
       const toAdd: GroceryItem[] = [];
       for (const newItem of newItems) {
-        const newName = (newItem.name || '').toLowerCase().trim();
-        const matchIdx = updated.findIndex(e => e.name.toLowerCase().trim() === newName);
+        // AI-assisted merge: find existing item by the exact name the AI identified
+        const aiMatchIdx = newItem.mergeWith
+          ? updated.findIndex(e => e.name === newItem.mergeWith)
+          : -1;
+        // Fallback: case-insensitive name match
+        const nameMatchIdx = aiMatchIdx === -1
+          ? updated.findIndex(e => e.name.toLowerCase().trim() === (newItem.name || '').toLowerCase().trim())
+          : -1;
+        const matchIdx = aiMatchIdx !== -1 ? aiMatchIdx : nameMatchIdx;
+
         if (matchIdx !== -1) {
           updated[matchIdx] = {
             ...updated[matchIdx],
-            quantity: tryMergeQuantity(updated[matchIdx].quantity, newItem.quantity),
+            // If AI provided mergeWith, it already computed the total quantity; otherwise add them
+            quantity: aiMatchIdx !== -1
+              ? (newItem.quantity ?? updated[matchIdx].quantity)
+              : tryMergeQuantity(updated[matchIdx].quantity, newItem.quantity),
+            // Preserve the recipe note so the user can see which recipe added/updated the item
+            note: newItem.note || updated[matchIdx].note,
           };
         } else {
           toAdd.push({
@@ -275,16 +288,18 @@ export default function App() {
     setInputValue('');
     setIsProcessing(true);
 
+    const currentItems = (lists as GroceryList[]).find(l => l.id === activeListId)?.items ?? [];
+
     if (isUrl(text)) {
       setProcessingLabel('Hämtar recept...');
       try {
-        const res = await extractFromUrl(text);
+        const res = await extractFromUrl(text, currentItems);
         if (res.items.length > 0) addExtractedItems(res.items);
       } catch (e) { console.error("URL extraction error:", e); }
     } else {
       setProcessingLabel('Bearbetar...');
       try {
-        const res = await smartMergeItems(text);
+        const res = await smartMergeItems(text, currentItems);
         addExtractedItems(res.items);
       } catch (e) { console.error("Smart add error:", e); }
     }
@@ -307,7 +322,8 @@ export default function App() {
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const items = await extractFromImage(base64);
+      const currentItems = (lists as GroceryList[]).find(l => l.id === activeListId)?.items ?? [];
+      const items = await extractFromImage(base64, currentItems);
       if (items.length > 0) {
         addExtractedItems(items);
       }

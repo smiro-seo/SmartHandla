@@ -40,6 +40,9 @@ export type ExtractedItem = {
   quantity?: string;
   aisle: string;
   note?: string;
+  // When set by the AI, this is the exact name of an existing list item to merge into
+  // instead of adding a new line. quantity should be the merged total.
+  mergeWith?: string;
 };
 
 /**
