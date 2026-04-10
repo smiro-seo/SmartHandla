@@ -475,8 +475,7 @@ export default function App() {
         type="file" 
         ref={fileInputRef} 
         onChange={handleFileUpload} 
-        accept="image/*" 
-        capture="environment"
+        accept="image/*"
         className="hidden" 
       />
 
