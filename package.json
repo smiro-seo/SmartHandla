@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "generate-icons": "node scripts/generate-icons.mjs"
+    "preview": "npm run build && wrangler dev",
+    "generate-icons": "node scripts/generate-icons.mjs",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "@google/genai": "1.38.0",
@@ -17,11 +18,13 @@
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.31.2",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "sharp": "^0.34.5",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vite-plugin-pwa": "^1.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "wrangler": "^4.81.1"
   }
 }
