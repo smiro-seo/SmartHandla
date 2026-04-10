@@ -22,7 +22,7 @@ import {
   Settings2
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
-import { onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { onAuthStateChanged, signInWithRedirect, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { getDb, getAuthService, googleProvider } from './firebase';
 import { GroceryItem, GroceryList, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
@@ -157,6 +157,8 @@ export default function App() {
     if (!isFirebaseReady) return;
     try {
       const auth = getAuthService();
+      // Process the result from a signInWithRedirect call if returning from Google.
+      getRedirectResult(auth).catch(e => console.error("Redirect auth error:", e));
       return onAuthStateChanged(auth, (user: any) => {
         if (user) {
           setUserProfile({ 
@@ -389,7 +391,7 @@ export default function App() {
     try {
       const auth = getAuthService();
       await setPersistence(auth, browserLocalPersistence);
-      await signInWithPopup(auth, googleProvider);
+      await signInWithRedirect(auth, googleProvider);
     } catch (e) { console.error("Login error:", e); }
   };
 
