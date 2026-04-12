@@ -57,12 +57,20 @@ export const addItemsFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
+// REST calls are routed through /api/… (Cloudflare Pages Function) so the
+// API key is injected server-side and never appears in browser-visible URLs.
+const getRestClient = () =>
+  new GoogleGenAI({
+    apiKey: 'proxy', // replaced server-side; SDK requires a non-empty string
+    httpOptions: { baseUrl: `${typeof window !== 'undefined' ? window.location.origin : ''}/api` },
+  });
+
 // Simple structured output — thinking disabled to avoid unnecessary cost.
 export const smartMergeItems = async (
   newInput: string,
   existingItems: Pick<GroceryItem, 'name' | 'quantity'>[] = []
 ): Promise<{ items: ExtractedItem[], isComplex: boolean }> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = getRestClient();
   try {
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -128,7 +136,7 @@ export const extractFromUrl = async (
   url: string,
   existingItems: Pick<GroceryItem, 'name' | 'quantity'>[] = []
 ): Promise<{ items: ExtractedItem[], sources: GroundingSource[] }> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = getRestClient();
   try {
     const mergeContext = existingItems.length
       ? ` Befintliga varor i listan: ${existingItems.map(i => `"${i.name}"${i.quantity ? ' (' + i.quantity + ')' : ''}`).join(', ')}. Om en ingrediens matchar en befintlig vara, lägg till fältet "mergeWith" med det exakta befintliga varunamnet och returnera den totala mängden i "quantity".`
@@ -174,7 +182,7 @@ export const extractFromImage = async (
   base64: string,
   existingItems: Pick<GroceryItem, 'name' | 'quantity'>[] = []
 ): Promise<ExtractedItem[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = getRestClient();
   const mimeType = base64.startsWith('data:') ? base64.split(';')[0].split(':')[1] : 'image/jpeg';
   const imageData = base64.includes(',') ? base64.split(',')[1] : base64;
   try {
