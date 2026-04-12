@@ -22,6 +22,10 @@ export default defineConfig(({ mode }) => {
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
           navigateFallback: '/index.html',
+          // Exclude Firebase auth handler from SW navigation fallback.
+          // Without this the SW intercepts the OAuth redirect to /__/auth/handler
+          // and serves index.html instead, so getRedirectResult never sees the token.
+          navigateFallbackDenylist: [/^\/__\/auth\//],
           runtimeCaching: [
             // esm.sh CDN — React, Firebase, Gemini SDK, lucide-react all load from here.
             // MUST be cached or the app shell won't render offline at all.
