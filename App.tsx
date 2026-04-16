@@ -24,7 +24,7 @@ import {
   ChefHat,
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
-import { onAuthStateChanged, signInWithRedirect, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { onAuthStateChanged, signInWithRedirect, signInWithPopup, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { getDb, getAuthService, googleProvider } from './firebase';
 import { GroceryItem, GroceryList, Recipe, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
@@ -474,12 +474,17 @@ export default function App() {
     try {
       const auth = getAuthService();
       await setPersistence(auth, browserLocalPersistence);
-      // Always use signInWithRedirect. The /__/auth/* Cloudflare Pages Function
-      // proxies Firebase's auth handler onto this domain, so the OAuth redirect_uri
-      // points here — keeping the entire chain on one origin. iOS then opens the
-      // final redirect in the PWA WebView (not Safari), so auth state lands in the
-      // correct storage context.
-      await signInWithRedirect(auth, googleProvider);
+      // iOS PWA: must use redirect — popups open in Safari (different context)
+      // so the auth result never lands back in the WebView.
+      // Android + Desktop: use popup via Chrome Custom Tab, which correctly
+      // returns the result to the originating context without the
+      // cross-context redirect problem that breaks Android PWA.
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      if (isIOS) {
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        await signInWithPopup(auth, googleProvider);
+      }
     } catch (e) { console.error("Login error:", e); }
   };
 
