@@ -219,15 +219,10 @@ export default function App() {
       setIsSyncing(true);
       try {
         const db = getDb();
-        const sanitizedLists = (lists as GroceryList[]).map(l => ({
-          ...l,
-          recipes: l.recipes ?? [],
-          items: l.items.map(i => {
-            const item: Record<string, unknown> = { ...i };
-            if (item.checkedAt === undefined) delete item.checkedAt;
-            return item as GroceryItem;
-          }),
-        }));
+        // JSON round-trip strips all undefined values (Firestore rejects them).
+        const sanitizedLists = JSON.parse(JSON.stringify(
+          (lists as GroceryList[]).map(l => ({ ...l, recipes: l.recipes ?? [] }))
+        ));
         await updateDoc(doc(db, 'users', userProfile.syncCode), { lists: sanitizedLists, name: userProfile.name, aisleOrder });
       } catch (e) { console.warn("Sync failed:", e); }
       finally { setIsSyncing(false); }
