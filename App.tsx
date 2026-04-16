@@ -138,6 +138,7 @@ export default function App() {
   const [isAisleEditorOpen, setIsAisleEditorOpen] = useState(false);
   const [isImagePickerOpen, setIsImagePickerOpen] = useState(false);
   const [isDinnersOpen, setIsDinnersOpen] = useState(false);
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
   const activeList = useMemo(() => lists.find(l => l.id === activeListId) || lists[0], [lists, activeListId]);
   const activeRecipes = useMemo(() => activeList.recipes || [], [activeList.recipes]);
@@ -515,6 +516,15 @@ export default function App() {
     ));
   };
 
+  const updateItemQuantity = (itemId: string, quantity: string) => {
+    setLists(prev => (prev as GroceryList[]).map(l =>
+      l.id !== activeListId ? l : {
+        ...l,
+        items: l.items.map(i => i.id === itemId ? { ...i, quantity: quantity.trim() || undefined } : i),
+      }
+    ));
+  };
+
   const addRecipe = (recipe: Recipe) => {
     setLists(prev => (prev as GroceryList[]).map(l => {
       if (l.id !== activeListIdRef.current) return l;
@@ -848,38 +858,59 @@ export default function App() {
                 {aisle}
               </h3>
               <div className="bg-white dark:bg-gray-900 rounded-[2rem] overflow-hidden shadow-sm border dark:border-gray-800">
-                {(items as GroceryItem[]).map(item => (
-                  <div 
-                    key={item.id} 
-                    className="group flex items-center gap-5 p-5 border-b last:border-0 dark:border-gray-800 hover:bg-gray-50/80 dark:hover:bg-gray-800/40 transition-colors"
-                  >
-                    <button 
-                      onClick={() => toggleItem(item.id, true)}
-                      className="w-7 h-7 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-primary flex items-center justify-center transition-all active:scale-90"
+                {(items as GroceryItem[]).map(item => {
+                  const isExpanded = expandedItemId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      className="group flex items-center gap-5 px-5 pt-5 pb-5 border-b last:border-0 dark:border-gray-800 hover:bg-gray-50/80 dark:hover:bg-gray-800/40 transition-colors"
                     >
-                      {item.checked && <Check size={18} className="text-primary stroke-[3]" />}
-                    </button>
-                    <div className="flex-1" onClick={() => toggleItem(item.id, true)}>
-                      <p className="font-bold dark:text-white text-base leading-tight">{item.name}</p>
-                      {item.quantity && (
-                        <p className="text-[11px] font-black text-primary-dark/70 dark:text-primary uppercase tracking-tighter mt-0.5">
-                          {item.quantity}
-                        </p>
-                      )}
-                      {item.note && (
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tight flex items-center gap-1 mt-1">
-                          <Utensils size={10} /> {item.note}
-                        </span>
-                      )}
+                      <button
+                        onClick={() => toggleItem(item.id, true)}
+                        className="w-7 h-7 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-primary flex items-center justify-center transition-all active:scale-90 shrink-0"
+                      >
+                        {item.checked && <Check size={18} className="text-primary stroke-[3]" />}
+                      </button>
+                      <div
+                        className="flex-1 cursor-pointer"
+                        onClick={() => setExpandedItemId(isExpanded ? null : item.id)}
+                      >
+                        <p className="font-bold dark:text-white text-base leading-tight">{item.name}</p>
+                        {!isExpanded && item.quantity && (
+                          <p className="text-[11px] font-black text-primary-dark/70 dark:text-primary uppercase tracking-tighter mt-0.5">
+                            {item.quantity}
+                          </p>
+                        )}
+                        {isExpanded && (
+                          <input
+                            autoFocus
+                            type="text"
+                            defaultValue={item.quantity ?? ''}
+                            placeholder="Antal (t.ex. 2 dl, 500 g)"
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') { updateItemQuantity(item.id, e.currentTarget.value); setExpandedItemId(null); }
+                              if (e.key === 'Escape') setExpandedItemId(null);
+                            }}
+                            onBlur={e => { updateItemQuantity(item.id, e.target.value); setExpandedItemId(null); }}
+                            className="mt-1.5 w-full text-sm font-bold bg-gray-100 dark:bg-gray-800 rounded-xl px-3 py-2 border-none focus:ring-2 focus:ring-primary dark:text-white outline-none"
+                          />
+                        )}
+                        {item.note && (
+                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tight flex items-center gap-1 mt-1">
+                            <Utensils size={10} /> {item.note}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => deleteItem(item.id)}
+                        className="p-2.5 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 dark:hover:bg-red-900/10 rounded-xl shrink-0"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => deleteItem(item.id)} 
-                      className="p-2.5 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 dark:hover:bg-red-900/10 rounded-xl"
-                    >
-                      <Trash2 size={18}/>
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}
