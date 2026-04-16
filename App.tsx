@@ -673,7 +673,7 @@ export default function App() {
                   <ShoppingBasket size={22} />
                   <span className="flex-1 text-left">{l.name}</span>
                   <div className={`px-2 py-0.5 rounded-full text-[10px] font-black ${activeListId === l.id ? 'bg-black/10' : 'bg-gray-100 dark:bg-gray-800'}`}>
-                    {l.items.length}
+                    {l.items.filter(i => !i.checked).length}
                   </div>
                 </button>
               ))}
