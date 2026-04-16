@@ -5,6 +5,7 @@ export interface GroceryItem {
   note?: string;
   aisle: string;
   checked: boolean;
+  checkedAt?: number;
 }
 
 export interface Recipe {

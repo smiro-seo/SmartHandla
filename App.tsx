@@ -160,7 +160,9 @@ export default function App() {
     });
   }, [itemsByAisle, aisleOrder]);
 
-  const completedItems = useMemo(() => activeList.items.filter(i => i.checked), [activeList.items]);
+  const completedItems = useMemo(() =>
+    activeList.items.filter(i => i.checked).sort((a, b) => (b.checkedAt ?? 0) - (a.checkedAt ?? 0)),
+  [activeList.items]);
 
   useEffect(() => {
     const timer = setTimeout(() => setIsFirebaseReady(true), 800);
@@ -217,7 +219,15 @@ export default function App() {
       setIsSyncing(true);
       try {
         const db = getDb();
-        const sanitizedLists = (lists as GroceryList[]).map(l => ({ ...l, recipes: l.recipes ?? [] }));
+        const sanitizedLists = (lists as GroceryList[]).map(l => ({
+          ...l,
+          recipes: l.recipes ?? [],
+          items: l.items.map(i => {
+            const item: Record<string, unknown> = { ...i };
+            if (item.checkedAt === undefined) delete item.checkedAt;
+            return item as GroceryItem;
+          }),
+        }));
         await updateDoc(doc(db, 'users', userProfile.syncCode), { lists: sanitizedLists, name: userProfile.name, aisleOrder });
       } catch (e) { console.warn("Sync failed:", e); }
       finally { setIsSyncing(false); }
@@ -486,8 +496,8 @@ export default function App() {
   };
 
   const toggleItem = (itemId: string, checked: boolean) => {
-    setLists(prev => (prev as GroceryList[]).map(l => 
-      l.id === activeListId ? { ...l, items: l.items.map(i => i.id === itemId ? { ...i, checked } : i) } : l
+    setLists(prev => (prev as GroceryList[]).map(l =>
+      l.id === activeListId ? { ...l, items: l.items.map(i => i.id === itemId ? { ...i, checked, checkedAt: checked ? Date.now() : undefined } : i) } : l
     ));
   };
 
