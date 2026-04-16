@@ -62,3 +62,17 @@ export interface GroundingSource {
     title: string;
   };
 }
+
+export interface SharedList extends GroceryList {
+  ownerUid: string;
+  memberUids: string[];
+  shareCode: string;
+  createdAt: number;
+}
+
+export type ListSource = 'owned' | 'shared';
+
+export interface ListWithSource extends GroceryList {
+  _source: ListSource;
+  _firestoreId?: string;
+}

@@ -1,33 +1,36 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { 
+import {
   Menu,
   Mic,
   Camera,
   Check,
   X,
   Loader2,
-  ChevronDown, 
-  ChevronUp, 
-  SendHorizontal, 
-  Sun, 
-  Moon, 
-  Trash2, 
-  ShoppingBasket, 
-  Utensils, 
-  Cloud, 
-  CloudUpload, 
-  User, 
+  ChevronDown,
+  ChevronUp,
+  SendHorizontal,
+  Sun,
+  Moon,
+  Trash2,
+  ShoppingBasket,
+  Utensils,
+  Cloud,
+  CloudUpload,
+  User,
   LogOut,
   Settings2,
   ImageIcon,
   ExternalLink,
   ChefHat,
+  Share2,
+  Users,
+  Copy,
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
 import { onAuthStateChanged, signInWithRedirect, signInWithPopup, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, collection, query, where, getDocs, onSnapshot, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { getDb, getAuthService, googleProvider } from './firebase';
-import { GroceryItem, GroceryList, Recipe, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
+import { GroceryItem, GroceryList, Recipe, AppView, ExtractedItem, GroundingSource, UserProfile, SharedList, ListWithSource } from './types';
 import {
   extractFromUrl,
   smartMergeItems,
@@ -49,6 +52,7 @@ const isDev = () =>
   ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
 const generateId = () => Math.random().toString(36).substr(2, 9).toUpperCase();
+const generateShareCode = () => Math.random().toString(36).substr(2, 8).toUpperCase().substr(0, 6);
 
 const getStoredUserId = () => {
   if (typeof window === 'undefined' || !window.localStorage) return 'SH-OFFLINE';
@@ -127,6 +131,7 @@ export default function App() {
   const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const activeListIdRef = useRef(activeListId);
   const listsRef = useRef<GroceryList[]>(INITIAL_LISTS);
+  const sharedListIdsRef = useRef<string[]>([]);
   const isInitialLoad = useRef(true);
   const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartTimeRef = useRef(0);
@@ -140,8 +145,21 @@ export default function App() {
   const [isDinnersOpen, setIsDinnersOpen] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [confirmDeleteListId, setConfirmDeleteListId] = useState<string | null>(null);
+  const [sharedListIds, setSharedListIds] = useState<string[]>([]);
+  const [sharedLists, setSharedLists] = useState<GroceryList[]>([]);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [joinCodeInput, setJoinCodeInput] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
 
-  const activeList = useMemo(() => lists.find(l => l.id === activeListId) || lists[0], [lists, activeListId]);
+  const canShare = userProfile.isGoogleAccount && userProfile.syncCode !== 'SH-OFFLINE';
+
+  const allLists = useMemo<ListWithSource[]>(() => [
+    ...lists.map(l => ({ ...l, _source: 'owned' as const })),
+    ...sharedLists.map(l => ({ ...l, _source: 'shared' as const, _firestoreId: l.id })),
+  ], [lists, sharedLists]);
+
+  const activeList = useMemo(() => allLists.find(l => l.id === activeListId) || allLists[0] || lists[0], [allLists, activeListId, lists]);
   const activeRecipes = useMemo(() => activeList.recipes || [], [activeList.recipes]);
 
   const itemsByAisle = useMemo(() => {
@@ -207,8 +225,9 @@ export default function App() {
           const data = docSnap.data();
           if (data.lists) setLists(data.lists);
           if (data.aisleOrder) setAisleOrder(data.aisleOrder);
+          if (data.sharedListIds) setSharedListIds(data.sharedListIds);
         } else {
-          setDoc(userDocRef, { name: userProfile.name, lists: INITIAL_LISTS, aisleOrder: [...VALID_AISLES] });
+          setDoc(userDocRef, { name: userProfile.name, lists: INITIAL_LISTS, aisleOrder: [...VALID_AISLES], sharedListIds: [] });
         }
         isInitialLoad.current = false;
       });
@@ -239,9 +258,50 @@ export default function App() {
   }, [isDarkMode]);
 
   useEffect(() => { activeListIdRef.current = activeListId; }, [activeListId]);
-  useEffect(() => { listsRef.current = lists as GroceryList[]; }, [lists]);
+  useEffect(() => { listsRef.current = allLists as GroceryList[]; }, [allLists]);
+  useEffect(() => { sharedListIdsRef.current = sharedListIds; }, [sharedListIds]);
+
+  // Subscribe to each shared list the user has joined
+  useEffect(() => {
+    if (!isFirebaseReady || userProfile.syncCode === 'SH-OFFLINE' || sharedListIds.length === 0) return;
+    const db = getDb();
+    const unsubs = sharedListIds.map(listId =>
+      onSnapshot(doc(db, 'lists', listId), (snap) => {
+        if (!snap.exists()) return;
+        setSharedLists(prev => {
+          const others = prev.filter(l => l.id !== listId);
+          return [...others, { id: listId, ...snap.data() } as GroceryList];
+        });
+      })
+    );
+    return () => unsubs.forEach(u => u());
+  }, [isFirebaseReady, userProfile.syncCode, sharedListIds]);
+
+  // Debounced write for shared lists
+  useEffect(() => {
+    if (!isFirebaseReady || userProfile.syncCode === 'SH-OFFLINE' || sharedLists.length === 0) return;
+    const db = getDb();
+    const timers = sharedLists.map(sl => {
+      return setTimeout(async () => {
+        try {
+          const sanitized = JSON.parse(JSON.stringify({ ...sl, recipes: sl.recipes ?? [], items: sl.items ?? [] }));
+          await updateDoc(doc(db, 'lists', sl.id), sanitized);
+        } catch (e) { console.warn('Shared list sync failed:', e); }
+      }, 2000);
+    });
+    return () => timers.forEach(clearTimeout);
+  }, [sharedLists, isFirebaseReady]);
 
   // --- FUNKTIONER ---
+
+  // Routes a list mutation to either the owned-lists state or the shared-lists state.
+  const mutateList = (listId: string, updater: (l: GroceryList) => GroceryList) => {
+    if (sharedListIdsRef.current.includes(listId)) {
+      setSharedLists(prev => prev.map(l => l.id === listId ? updater(l) : l));
+    } else {
+      setLists(prev => (prev as GroceryList[]).map(l => l.id === listId ? updater(l) : l));
+    }
+  };
 
   // Normalise a name for comparison: lowercase, trim, collapse whitespace.
   const normName = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -278,8 +338,10 @@ export default function App() {
   };
 
   const addExtractedItems = (newItems: ExtractedItem[]) => {
-    setLists(prev => (prev as GroceryList[]).map(list => {
-      if (list.id !== activeListIdRef.current) return list;
+    const targetId = activeListIdRef.current;
+    const setter = sharedListIdsRef.current.includes(targetId) ? setSharedLists : setLists;
+    setter(prev => (prev as GroceryList[]).map(list => {
+      if (list.id !== targetId) return list;
       const updated = [...list.items];
       const toAdd: GroceryItem[] = [];
       for (const newItem of newItems) {
@@ -498,9 +560,10 @@ export default function App() {
   };
 
   const toggleItem = (itemId: string, checked: boolean) => {
-    setLists(prev => (prev as GroceryList[]).map(l =>
-      l.id === activeListId ? { ...l, items: l.items.map(i => i.id === itemId ? { ...i, checked, checkedAt: checked ? Date.now() : undefined } : i) } : l
-    ));
+    mutateList(activeListId, l => ({
+      ...l,
+      items: l.items.map(i => i.id === itemId ? { ...i, checked, checkedAt: checked ? Date.now() : undefined } : i),
+    }));
   };
 
   const moveAisle = (index: number, direction: -1 | 1) => {
@@ -512,43 +575,101 @@ export default function App() {
   };
 
   const deleteItem = (itemId: string) => {
-    setLists(prev => (prev as GroceryList[]).map(l =>
-      l.id === activeListId ? { ...l, items: l.items.filter(i => i.id !== itemId) } : l
-    ));
+    mutateList(activeListId, l => ({ ...l, items: l.items.filter(i => i.id !== itemId) }));
   };
 
   const updateItemQuantity = (itemId: string, quantity: string) => {
-    setLists(prev => (prev as GroceryList[]).map(l =>
-      l.id !== activeListId ? l : {
-        ...l,
-        items: l.items.map(i => i.id === itemId ? { ...i, quantity: quantity.trim() || undefined } : i),
-      }
-    ));
-  };
-
-  const addRecipe = (recipe: Recipe) => {
-    setLists(prev => (prev as GroceryList[]).map(l => {
-      if (l.id !== activeListIdRef.current) return l;
-      const existing = l.recipes || [];
-      if (existing.some(r => r.name === recipe.name)) return l;
-      return { ...l, recipes: [...existing, recipe] };
+    mutateList(activeListId, l => ({
+      ...l,
+      items: l.items.map(i => i.id === itemId ? { ...i, quantity: quantity.trim() || undefined } : i),
     }));
   };
 
+  const addRecipe = (recipe: Recipe) => {
+    mutateList(activeListIdRef.current, l => {
+      const existing = l.recipes || [];
+      if (existing.some(r => r.name === recipe.name)) return l;
+      return { ...l, recipes: [...existing, recipe] };
+    });
+  };
+
   const removeRecipe = (recipeId: string) => {
-    setLists(prev => (prev as GroceryList[]).map(l =>
-      l.id !== activeListId ? l : { ...l, recipes: (l.recipes || []).filter(r => r.id !== recipeId) }
-    ));
+    mutateList(activeListId, l => ({ ...l, recipes: (l.recipes || []).filter(r => r.id !== recipeId) }));
   };
 
   const deleteList = (listId: string) => {
     setLists(prev => {
       const next = (prev as GroceryList[]).filter(l => l.id !== listId);
-      if (activeListId === listId) setActiveListId(next[0]?.id ?? '');
+      if (activeListId === listId) setActiveListId(next[0]?.id ?? allLists.find(l => l.id !== listId)?.id ?? '');
       return next;
     });
     setConfirmDeleteListId(null);
     setIsSidebarOpen(false);
+  };
+
+  const createSharedList = async (listId: string) => {
+    if (!canShare) return;
+    const ownedList = lists.find(l => l.id === listId);
+    if (!ownedList) return;
+    const db = getDb();
+    const shareCode = generateShareCode();
+    const sharedDoc = JSON.parse(JSON.stringify({
+      ...ownedList,
+      ownerUid: userProfile.syncCode,
+      memberUids: [userProfile.syncCode],
+      shareCode,
+      createdAt: Date.now(),
+      recipes: ownedList.recipes ?? [],
+    }));
+    await setDoc(doc(db, 'lists', listId), sharedDoc);
+    const newLists = lists.filter(l => l.id !== listId);
+    const newSharedIds = [...sharedListIds, listId];
+    setLists(newLists);
+    setSharedListIds(newSharedIds);
+    await updateDoc(doc(db, 'users', userProfile.syncCode), {
+      lists: JSON.parse(JSON.stringify(newLists.map(l => ({ ...l, recipes: l.recipes ?? [] })))),
+      sharedListIds: newSharedIds,
+    });
+  };
+
+  const joinSharedList = async (code: string) => {
+    if (!canShare) return;
+    setJoinError(null);
+    const db = getDb();
+    try {
+      const q = query(collection(db, 'lists'), where('shareCode', '==', code.toUpperCase().trim()));
+      const snap = await getDocs(q);
+      if (snap.empty) { setJoinError('Ingen lista hittades med den koden.'); return; }
+      const listId = snap.docs[0].id;
+      if (sharedListIds.includes(listId)) { setJoinError('Du är redan med i den listan.'); return; }
+      await updateDoc(doc(db, 'lists', listId), { memberUids: arrayUnion(userProfile.syncCode) });
+      const newSharedIds = [...sharedListIds, listId];
+      setSharedListIds(newSharedIds);
+      await updateDoc(doc(db, 'users', userProfile.syncCode), { sharedListIds: newSharedIds });
+      setIsShareModalOpen(false);
+      setJoinCodeInput('');
+    } catch (e) {
+      setJoinError('Något gick fel. Försök igen.');
+    }
+  };
+
+  const leaveSharedList = async (listId: string) => {
+    const db = getDb();
+    await updateDoc(doc(db, 'lists', listId), { memberUids: arrayRemove(userProfile.syncCode) });
+    const newSharedIds = sharedListIds.filter(id => id !== listId);
+    setSharedListIds(newSharedIds);
+    setSharedLists(prev => prev.filter(l => l.id !== listId));
+    if (activeListId === listId) setActiveListId(allLists.find(l => l.id !== listId)?.id ?? '');
+    await updateDoc(doc(db, 'users', userProfile.syncCode), { sharedListIds: newSharedIds });
+    setConfirmDeleteListId(null);
+    setIsSidebarOpen(false);
+  };
+
+  const copyShareCode = (code: string) => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    });
   };
 
   // Show splash while Firebase initialises (avoids flash of login screen for returning users)
@@ -638,6 +759,86 @@ export default function App() {
         </div>
       )}
 
+      {/* Share Modal */}
+      {isShareModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-end" onClick={() => { setIsShareModalOpen(false); setJoinError(null); setJoinCodeInput(''); }}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative w-full bg-white dark:bg-gray-900 rounded-t-3xl p-6 pb-10 flex flex-col gap-5 shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-10 h-1 bg-gray-300 dark:bg-gray-600 rounded-full mx-auto" />
+            <h3 className="font-black text-xl dark:text-white text-center tracking-tight">Dela lista</h3>
+
+            {/* Show share code for the active list if it's already shared */}
+            {(() => {
+              const activeShared = sharedLists.find(l => l.id === activeListId) as SharedList | undefined;
+              const isOwned = lists.some(l => l.id === activeListId);
+              if (activeShared?.shareCode) {
+                return (
+                  <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl p-5 space-y-3">
+                    <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Delningskod för "{activeShared.name}"</p>
+                    <div className="flex items-center gap-3">
+                      <span className="font-black text-3xl tracking-widest text-primary flex-1">{activeShared.shareCode}</span>
+                      <button
+                        onClick={() => copyShareCode(activeShared.shareCode)}
+                        className="p-3 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary transition-colors"
+                        title="Kopiera kod"
+                      >
+                        {copiedCode ? <Check size={20} /> : <Copy size={20} />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 font-bold">Ge den här koden till den du vill dela listan med.</p>
+                    <p className="text-xs text-gray-400 font-bold">{activeShared.memberUids?.length ?? 1} {activeShared.memberUids?.length === 1 ? 'deltagare' : 'deltagare'}</p>
+                  </div>
+                );
+              }
+              if (isOwned) {
+                return (
+                  <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl p-5 space-y-3">
+                    <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Skapa delningskod</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 font-bold leading-relaxed">
+                      Skapa en delningskod så att andra kan gå med i din lista och redigera den i realtid.
+                    </p>
+                    <button
+                      onClick={async () => { await createSharedList(activeListId); }}
+                      className="w-full py-3 bg-primary text-black font-black rounded-2xl hover:opacity-90 active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Share2 size={18} /> Skapa delningskod
+                    </button>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            {/* Join a list by code */}
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl p-5 space-y-3">
+              <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Gå med i en lista</p>
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={joinCodeInput}
+                  onChange={e => setJoinCodeInput(e.target.value.toUpperCase().slice(0, 6))}
+                  onKeyDown={e => e.key === 'Enter' && joinCodeInput.length === 6 && joinSharedList(joinCodeInput)}
+                  placeholder="ABC123"
+                  maxLength={6}
+                  className="flex-1 text-center text-xl font-black tracking-widest bg-white dark:bg-gray-700 border-2 border-gray-200 dark:border-gray-600 focus:border-primary rounded-xl px-4 py-3 dark:text-white outline-none transition-colors"
+                />
+                <button
+                  onClick={() => joinSharedList(joinCodeInput)}
+                  disabled={joinCodeInput.length < 6}
+                  className="px-5 bg-primary text-black font-black rounded-xl disabled:opacity-40 hover:opacity-90 active:scale-95 transition-all"
+                >
+                  Gå med
+                </button>
+              </div>
+              {joinError && <p className="text-sm text-red-500 font-bold">{joinError}</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sidomeny (Sidebar) */}
       <div className={`fixed inset-0 z-[100] transition-opacity duration-300 ${isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)} />
@@ -685,20 +886,21 @@ export default function App() {
 
             <nav className="flex-1 space-y-2 overflow-y-auto hide-scrollbar">
               <p className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em] mb-3 px-2">Dina Inköpslistor</p>
-              {(lists as GroceryList[]).map(l => {
+              {allLists.map(l => {
                 const isActive = activeListId === l.id;
                 const isConfirming = confirmDeleteListId === l.id;
+                const isShared = l._source === 'shared';
                 return (
                   <div key={l.id} className={`w-full rounded-2xl font-bold transition-all ${isActive ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-300'}`}>
                     {isConfirming ? (
                       <div className="p-4 flex flex-col gap-3">
-                        <p className="text-sm font-black truncate">Ta bort "{l.name}"?</p>
+                        <p className="text-sm font-black truncate">{isShared ? 'Lämna' : 'Ta bort'} "{l.name}"?</p>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => deleteList(l.id)}
+                            onClick={() => isShared ? leaveSharedList(l.id) : deleteList(l.id)}
                             className="flex-1 py-2 rounded-xl bg-red-500 text-white text-xs font-black hover:bg-red-600 transition-colors"
                           >
-                            Ta bort
+                            {isShared ? 'Lämna' : 'Ta bort'}
                           </button>
                           <button
                             onClick={() => setConfirmDeleteListId(null)}
@@ -709,21 +911,31 @@ export default function App() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-4 p-4">
+                      <div className="flex items-center gap-2 p-4">
                         <button
                           onClick={() => { setActiveListId(l.id); setIsSidebarOpen(false); }}
-                          className="flex items-center gap-4 flex-1 min-w-0 text-left"
+                          className="flex items-center gap-3 flex-1 min-w-0 text-left"
                         >
-                          <ShoppingBasket size={22} className="shrink-0" />
+                          {isShared ? <Users size={20} className="shrink-0" /> : <ShoppingBasket size={22} className="shrink-0" />}
                           <span className="flex-1 truncate">{l.name}</span>
                           <div className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${isActive ? 'bg-black/10' : 'bg-gray-100 dark:bg-gray-800'}`}>
                             {l.items.filter(i => !i.checked).length}
                           </div>
                         </button>
-                        {(lists as GroceryList[]).length > 1 && (
+                        {canShare && (
+                          <button
+                            onClick={() => { setActiveListId(l.id); setIsShareModalOpen(true); }}
+                            className={`p-1.5 rounded-xl transition-colors shrink-0 ${isActive ? 'hover:bg-black/10 text-black/50 hover:text-black/80' : 'text-gray-300 hover:text-primary hover:bg-primary/10'}`}
+                            title="Dela lista"
+                          >
+                            <Share2 size={15} />
+                          </button>
+                        )}
+                        {allLists.length > 1 && (
                           <button
                             onClick={() => setConfirmDeleteListId(l.id)}
                             className={`p-1.5 rounded-xl transition-colors shrink-0 ${isActive ? 'hover:bg-black/10 text-black/40 hover:text-black/70' : 'text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10'}`}
+                            title={isShared ? 'Lämna lista' : 'Ta bort lista'}
                           >
                             <Trash2 size={15} />
                           </button>
