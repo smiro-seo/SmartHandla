@@ -139,6 +139,7 @@ export default function App() {
   const [isImagePickerOpen, setIsImagePickerOpen] = useState(false);
   const [isDinnersOpen, setIsDinnersOpen] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  const [confirmDeleteListId, setConfirmDeleteListId] = useState<string | null>(null);
 
   const activeList = useMemo(() => lists.find(l => l.id === activeListId) || lists[0], [lists, activeListId]);
   const activeRecipes = useMemo(() => activeList.recipes || [], [activeList.recipes]);
@@ -540,6 +541,16 @@ export default function App() {
     ));
   };
 
+  const deleteList = (listId: string) => {
+    setLists(prev => {
+      const next = (prev as GroceryList[]).filter(l => l.id !== listId);
+      if (activeListId === listId) setActiveListId(next[0]?.id ?? '');
+      return next;
+    });
+    setConfirmDeleteListId(null);
+    setIsSidebarOpen(false);
+  };
+
   // Show splash while Firebase initialises (avoids flash of login screen for returning users)
   if (!isFirebaseReady) {
     return (
@@ -674,19 +685,54 @@ export default function App() {
 
             <nav className="flex-1 space-y-2 overflow-y-auto hide-scrollbar">
               <p className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em] mb-3 px-2">Dina Inköpslistor</p>
-              {(lists as GroceryList[]).map(l => (
-                <button 
-                  key={l.id} 
-                  onClick={() => { setActiveListId(l.id); setIsSidebarOpen(false); }}
-                  className={`w-full p-4 rounded-2xl flex items-center gap-4 font-bold transition-all ${activeListId === l.id ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-300'}`}
-                >
-                  <ShoppingBasket size={22} />
-                  <span className="flex-1 text-left">{l.name}</span>
-                  <div className={`px-2 py-0.5 rounded-full text-[10px] font-black ${activeListId === l.id ? 'bg-black/10' : 'bg-gray-100 dark:bg-gray-800'}`}>
-                    {l.items.filter(i => !i.checked).length}
+              {(lists as GroceryList[]).map(l => {
+                const isActive = activeListId === l.id;
+                const isConfirming = confirmDeleteListId === l.id;
+                return (
+                  <div key={l.id} className={`w-full rounded-2xl font-bold transition-all ${isActive ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-300'}`}>
+                    {isConfirming ? (
+                      <div className="p-4 flex flex-col gap-3">
+                        <p className="text-sm font-black truncate">Ta bort "{l.name}"?</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => deleteList(l.id)}
+                            className="flex-1 py-2 rounded-xl bg-red-500 text-white text-xs font-black hover:bg-red-600 transition-colors"
+                          >
+                            Ta bort
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteListId(null)}
+                            className="flex-1 py-2 rounded-xl bg-black/10 dark:bg-white/10 text-xs font-black hover:bg-black/20 transition-colors"
+                          >
+                            Avbryt
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-4 p-4">
+                        <button
+                          onClick={() => { setActiveListId(l.id); setIsSidebarOpen(false); }}
+                          className="flex items-center gap-4 flex-1 min-w-0 text-left"
+                        >
+                          <ShoppingBasket size={22} className="shrink-0" />
+                          <span className="flex-1 truncate">{l.name}</span>
+                          <div className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${isActive ? 'bg-black/10' : 'bg-gray-100 dark:bg-gray-800'}`}>
+                            {l.items.filter(i => !i.checked).length}
+                          </div>
+                        </button>
+                        {(lists as GroceryList[]).length > 1 && (
+                          <button
+                            onClick={() => setConfirmDeleteListId(l.id)}
+                            className={`p-1.5 rounded-xl transition-colors shrink-0 ${isActive ? 'hover:bg-black/10 text-black/40 hover:text-black/70' : 'text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10'}`}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </button>
-              ))}
+                );
+              })}
             </nav>
 
             <div className="pt-6 border-t dark:border-gray-800 space-y-3">
