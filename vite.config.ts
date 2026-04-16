@@ -12,6 +12,17 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      proxy: {
+        '/api': {
+          target: 'https://generativelanguage.googleapis.com',
+          changeOrigin: true,
+          rewrite: (p) => {
+            const withoutPrefix = p.replace(/^\/api/, '');
+            const separator = withoutPrefix.includes('?') ? '&' : '?';
+            return `${withoutPrefix}${separator}key=${geminiApiKey}`;
+          },
+        },
+      },
     },
     plugins: [
       react(),

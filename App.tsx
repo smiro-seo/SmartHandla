@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  Menu, 
-  Mic, 
-  Camera, 
-  Check, 
-  X, 
-  ShoppingCart, 
-  Loader2, 
+  Menu,
+  Mic,
+  Camera,
+  Check,
+  X,
+  Loader2,
   ChevronDown, 
   ChevronUp, 
   SendHorizontal, 
@@ -20,13 +19,15 @@ import {
   User, 
   LogOut,
   Settings2,
-  ImageIcon
+  ImageIcon,
+  ExternalLink,
+  ChefHat,
 } from 'lucide-react';
 import { GoogleGenAI, Modality, Blob, LiveServerMessage } from "@google/genai";
 import { onAuthStateChanged, signInWithRedirect, getRedirectResult, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { getDb, getAuthService, googleProvider } from './firebase';
-import { GroceryItem, GroceryList, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
+import { GroceryItem, GroceryList, Recipe, AppView, ExtractedItem, GroundingSource, UserProfile } from './types';
 import {
   extractFromUrl,
   smartMergeItems,
@@ -43,6 +44,10 @@ const INITIAL_LISTS: GroceryList[] = [
 
 
 // --- HJÄLPFUNKTIONER ---
+const isDev = () =>
+  typeof window !== 'undefined' &&
+  ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
 const generateId = () => Math.random().toString(36).substr(2, 9).toUpperCase();
 
 const getStoredUserId = () => {
@@ -106,11 +111,14 @@ export default function App() {
     return saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
   
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => ({
-    name: (typeof localStorage !== 'undefined' && localStorage.getItem('smarthandla_user_name')) || 'Gäst',
-    syncCode: getStoredUserId(),
-    isGoogleAccount: false
-  }));
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => isDev()
+    ? { name: 'Dev', syncCode: 'SH-OFFLINE', isGoogleAccount: true }
+    : {
+        name: (typeof localStorage !== 'undefined' && localStorage.getItem('smarthandla_user_name')) || 'Gäst',
+        syncCode: getStoredUserId(),
+        isGoogleAccount: false,
+      }
+  );
 
   const liveSessionRef = useRef<any>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
@@ -129,8 +137,10 @@ export default function App() {
   const [aisleOrder, setAisleOrder] = useState<string[]>([...VALID_AISLES]);
   const [isAisleEditorOpen, setIsAisleEditorOpen] = useState(false);
   const [isImagePickerOpen, setIsImagePickerOpen] = useState(false);
+  const [isDinnersOpen, setIsDinnersOpen] = useState(false);
 
   const activeList = useMemo(() => lists.find(l => l.id === activeListId) || lists[0], [lists, activeListId]);
+  const activeRecipes = useMemo(() => activeList.recipes || [], [activeList.recipes]);
 
   const itemsByAisle = useMemo(() => {
     const grouped: Record<string, GroceryItem[]> = {};
@@ -158,7 +168,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isFirebaseReady) return;
+    if (!isFirebaseReady || isDev()) return;
     try {
       const auth = getAuthService();
       // Process the result from a signInWithRedirect call if returning from Google.
@@ -312,13 +322,21 @@ export default function App() {
       setProcessingLabel('Hämtar recept...');
       try {
         const res = await extractFromUrl(text, currentItems);
-        if (res.items.length > 0) addExtractedItems(res.items);
+        if (res.items.length > 0) {
+          addExtractedItems(res.items);
+          const recipeName = res.items[0]?.note || new URL(text).hostname;
+          addRecipe({ id: generateId(), name: recipeName, sourceUrl: text });
+        }
       } catch (e) { console.error("URL extraction error:", e); }
     } else {
       setProcessingLabel('Bearbetar...');
       try {
         const res = await smartMergeItems(text, currentItems);
         addExtractedItems(res.items);
+        if (res.isComplex && res.items.length > 0) {
+          const recipeName = res.items[0]?.note || text;
+          addRecipe({ id: generateId(), name: recipeName });
+        }
       } catch (e) { console.error("Smart add error:", e); }
     }
 
@@ -344,6 +362,8 @@ export default function App() {
       const items = await extractFromImage(base64, currentItems);
       if (items.length > 0) {
         addExtractedItems(items);
+        const recipeName = items[0]?.note || 'Foto-recept';
+        addRecipe({ id: generateId(), name: recipeName });
       }
     } catch (e) {
       console.error("Image processing error:", e);
@@ -479,8 +499,23 @@ export default function App() {
   };
 
   const deleteItem = (itemId: string) => {
-    setLists(prev => (prev as GroceryList[]).map(l => 
+    setLists(prev => (prev as GroceryList[]).map(l =>
       l.id === activeListId ? { ...l, items: l.items.filter(i => i.id !== itemId) } : l
+    ));
+  };
+
+  const addRecipe = (recipe: Recipe) => {
+    setLists(prev => (prev as GroceryList[]).map(l => {
+      if (l.id !== activeListIdRef.current) return l;
+      const existing = l.recipes || [];
+      if (existing.some(r => r.name === recipe.name)) return l;
+      return { ...l, recipes: [...existing, recipe] };
+    }));
+  };
+
+  const removeRecipe = (recipeId: string) => {
+    setLists(prev => (prev as GroceryList[]).map(l =>
+      l.id !== activeListId ? l : { ...l, recipes: (l.recipes || []).filter(r => r.id !== recipeId) }
     ));
   };
 
@@ -698,12 +733,6 @@ export default function App() {
             </div>
           </div>
         </div>
-        <button 
-          onClick={() => setView('shopping')} 
-          className="bg-primary text-black px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
-        >
-          Handla
-        </button>
       </header>
 
       {/* Huvudinnehåll */}
@@ -750,6 +779,47 @@ export default function App() {
             </div>
           )}
         </section>
+
+        {/* Middagar */}
+        {activeRecipes.length > 0 && (
+          <div>
+            <button
+              onClick={() => setIsDinnersOpen(!isDinnersOpen)}
+              className="flex items-center gap-2 text-xs font-black uppercase text-gray-400 px-2 mb-3 tracking-widest hover:text-gray-600 transition-colors"
+            >
+              {isDinnersOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              <ChefHat size={15} />
+              Middagar ({activeRecipes.length})
+            </button>
+            {isDinnersOpen && (
+              <div className="bg-white dark:bg-gray-900 rounded-[2rem] overflow-hidden shadow-sm border dark:border-gray-800">
+                {activeRecipes.map(recipe => (
+                  <div key={recipe.id} className="group flex items-center gap-4 p-5 border-b last:border-0 dark:border-gray-800 hover:bg-gray-50/80 dark:hover:bg-gray-800/40 transition-colors">
+                    <ChefHat size={18} className="text-primary shrink-0" />
+                    <p className="flex-1 font-bold dark:text-white text-base leading-tight">{recipe.name}</p>
+                    {recipe.sourceUrl && (
+                      <a
+                        href={recipe.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-2 text-gray-400 hover:text-primary transition-colors rounded-xl hover:bg-primary/10"
+                        title="Öppna recept"
+                      >
+                        <ExternalLink size={17} />
+                      </a>
+                    )}
+                    <button
+                      onClick={() => removeRecipe(recipe.id)}
+                      className="p-2 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 dark:hover:bg-red-900/10 rounded-xl"
+                    >
+                      <Trash2 size={17} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Listvisning */}
         <div className="space-y-10">
@@ -838,64 +908,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* Shopping Mode Vy */}
-      {view === 'shopping' && (
-        <div className="fixed inset-0 bg-white dark:bg-gray-950 z-[200] flex flex-col animate-in fade-in duration-300">
-          <header className="px-6 py-5 border-b dark:border-gray-800 flex items-center justify-between bg-white/90 dark:bg-gray-950/90 backdrop-blur-md sticky top-0 z-10">
-            <h2 className="font-black text-2xl dark:text-white tracking-tighter flex items-center gap-3">
-              <ShoppingCart size={28} className="text-primary" />
-              Handlar...
-            </h2>
-            <button 
-              onClick={() => setView('main')} 
-              className="px-6 py-2.5 bg-gray-900 dark:bg-primary text-white dark:text-black rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all"
-            >
-              Avsluta
-            </button>
-          </header>
-          <main className="flex-1 overflow-y-auto p-6 space-y-8 pb-24">
-            {Object.keys(itemsByAisle).length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
-                <Check size={80} className="text-primary mb-6" />
-                <p className="font-black text-2xl dark:text-white">Allt är klart!</p>
-                <p className="text-sm dark:text-gray-400 mt-2">Du har bockat av alla varor på listan.</p>
-                <button 
-                  onClick={() => setView('main')}
-                  className="mt-10 px-10 py-4 bg-primary text-black font-black rounded-2xl shadow-xl shadow-primary/20"
-                >
-                  Tillbaka till listan
-                </button>
-              </div>
-            ) : (
-              sortedAisleEntries.map(([aisle, items]) => (
-                <div key={aisle} className="space-y-4">
-                  <div className="flex items-center gap-3 px-2">
-                    <div className="w-1.5 h-8 bg-primary rounded-full" />
-                    <h3 className="text-xs font-black uppercase text-gray-500 tracking-[0.3em]">{aisle}</h3>
-                  </div>
-                  <div className="grid gap-4">
-                    {(items as GroceryItem[]).map(item => (
-                      <div 
-                        key={item.id} 
-                        onClick={() => toggleItem(item.id, true)}
-                        className="flex items-center gap-6 p-6 bg-gray-50 dark:bg-gray-900 rounded-3xl border dark:border-gray-800 active:scale-[0.98] transition-all cursor-pointer shadow-sm"
-                      >
-                        <div className="w-10 h-10 rounded-2xl border-4 border-gray-200 dark:border-gray-800 flex items-center justify-center bg-white dark:bg-gray-950">
-                          {item.checked && <Check size={24} className="text-primary stroke-[4]" />}
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-xl font-black dark:text-white leading-none">{item.name}</p>
-                          {item.quantity && <p className="text-xs font-black text-primary-dark dark:text-primary uppercase tracking-tighter mt-1">{item.quantity}</p>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
-          </main>
-        </div>
-      )}
 
       {/* URL Import Vy */}
       {view === 'import-url' && (

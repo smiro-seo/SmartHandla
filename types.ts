@@ -7,11 +7,18 @@ export interface GroceryItem {
   checked: boolean;
 }
 
+export interface Recipe {
+  id: string;
+  name: string;
+  sourceUrl?: string;
+}
+
 export interface GroceryList {
   id: string;
   name: string;
   icon: string;
   items: GroceryItem[];
+  recipes?: Recipe[];
 }
 
 export interface UserProfile {
@@ -22,7 +29,7 @@ export interface UserProfile {
   isGoogleAccount?: boolean;
 }
 
-export type AppView = 'main' | 'shopping' | 'import-url' | 'profile' | 'ingredient-preview';
+export type AppView = 'main' | 'import-url' | 'profile' | 'ingredient-preview';
 
 export enum Aisle {
   PRODUCE = 'Frukt & Grönt',
