@@ -217,7 +217,8 @@ export default function App() {
       setIsSyncing(true);
       try {
         const db = getDb();
-        await updateDoc(doc(db, 'users', userProfile.syncCode), { lists, name: userProfile.name, aisleOrder });
+        const sanitizedLists = (lists as GroceryList[]).map(l => ({ ...l, recipes: l.recipes ?? [] }));
+        await updateDoc(doc(db, 'users', userProfile.syncCode), { lists: sanitizedLists, name: userProfile.name, aisleOrder });
       } catch (e) { console.warn("Sync failed:", e); }
       finally { setIsSyncing(false); }
     };
