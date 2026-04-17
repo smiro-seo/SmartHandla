@@ -159,7 +159,10 @@ export default function App() {
     ...sharedLists.map(l => ({ ...l, _source: 'shared' as const, _firestoreId: l.id })),
   ], [lists, sharedLists]);
 
-  const activeList = useMemo(() => allLists.find(l => l.id === activeListId) || allLists[0] || lists[0], [allLists, activeListId, lists]);
+  const activeList = useMemo(
+    () => allLists.find(l => l.id === activeListId) || allLists[0] || lists[0] || { id: '', name: '', icon: '', items: [], recipes: [] },
+    [allLists, activeListId, lists]
+  );
   const activeRecipes = useMemo(() => activeList.recipes || [], [activeList.recipes]);
 
   const itemsByAisle = useMemo(() => {
@@ -624,6 +627,8 @@ export default function App() {
     await setDoc(doc(db, 'lists', listId), sharedDoc);
     const newLists = lists.filter(l => l.id !== listId);
     const newSharedIds = [...sharedListIds, listId];
+    // Optimistically add to sharedLists immediately so allLists never loses the list
+    setSharedLists(prev => [...prev.filter(l => l.id !== listId), sharedDoc as GroceryList]);
     setLists(newLists);
     setSharedListIds(newSharedIds);
     await updateDoc(doc(db, 'users', userProfile.syncCode), {
