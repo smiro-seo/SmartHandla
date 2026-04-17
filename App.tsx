@@ -911,33 +911,30 @@ export default function App() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2 p-4">
+                      <div className="flex items-center gap-1 p-3">
                         <button
                           onClick={() => { setActiveListId(l.id); setIsSidebarOpen(false); }}
-                          className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                          className="flex items-center gap-3 flex-1 min-w-0 text-left px-1"
                         >
-                          {isShared ? <Users size={20} className="shrink-0" /> : <ShoppingBasket size={22} className="shrink-0" />}
-                          <span className="flex-1 truncate">{l.name}</span>
-                          <div className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${isActive ? 'bg-black/10' : 'bg-gray-100 dark:bg-gray-800'}`}>
-                            {l.items.filter(i => !i.checked).length}
-                          </div>
+                          {isShared ? <Users size={19} className="shrink-0" /> : <ShoppingBasket size={19} className="shrink-0" />}
+                          <span className="flex-1 truncate text-sm">{l.name}</span>
                         </button>
                         {canShare && (
                           <button
                             onClick={() => { setActiveListId(l.id); setIsShareModalOpen(true); }}
-                            className={`p-1.5 rounded-xl transition-colors shrink-0 ${isActive ? 'hover:bg-black/10 text-black/50 hover:text-black/80' : 'text-gray-300 hover:text-primary hover:bg-primary/10'}`}
+                            className={`p-2 rounded-xl transition-colors shrink-0 ${isActive ? 'hover:bg-black/10 text-black/50 hover:text-black/80' : 'text-gray-400 hover:text-primary hover:bg-primary/10'}`}
                             title="Dela lista"
                           >
-                            <Share2 size={15} />
+                            <Share2 size={16} />
                           </button>
                         )}
                         {allLists.length > 1 && (
                           <button
                             onClick={() => setConfirmDeleteListId(l.id)}
-                            className={`p-1.5 rounded-xl transition-colors shrink-0 ${isActive ? 'hover:bg-black/10 text-black/40 hover:text-black/70' : 'text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10'}`}
+                            className={`p-2 rounded-xl transition-colors shrink-0 ${isActive ? 'hover:bg-black/10 text-black/40 hover:text-black/70' : 'text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10'}`}
                             title={isShared ? 'Lämna lista' : 'Ta bort lista'}
                           >
-                            <Trash2 size={15} />
+                            <Trash2 size={16} />
                           </button>
                         )}
                       </div>
